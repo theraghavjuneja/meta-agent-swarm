@@ -24,18 +24,6 @@ import sys
 
 import structlog
 
-# Processors shared between the structlog chain and the stdlib bridge so that
-# records from third-party libraries (httpx, SQLAlchemy …) are rendered the
-# same way.
-_SHARED_PROCESSORS: list = [
-    structlog.stdlib.add_log_level,
-    structlog.stdlib.add_logger_name,
-    structlog.processors.TimeStamper(fmt="iso", utc=True),
-    structlog.processors.StackInfoRenderer(),
-    structlog.processors.format_exc_info,
-    structlog.processors.EventRenamer("event"),
-]
-
 
 def configure_logging(*, level: str | int = "INFO") -> None:
     """Configure structlog + the stdlib root logger.
@@ -43,41 +31,41 @@ def configure_logging(*, level: str | int = "INFO") -> None:
     Call **once** at process start (e.g. in the worker/API entrypoint).
     Safe to call multiple times; subsequent calls are idempotent.
     """
-    _level_int = level if isinstance(level, int) else getattr(logging, level.upper(), logging.INFO)
+    _level_int = (
+        level if isinstance(level, int) else getattr(logging, level.upper(), logging.INFO)
+    )
 
     structlog.configure(
         processors=[
-            *_SHARED_PROCESSORS,
-            # Final step: serialise to JSON.
+            # Add lower-cased level name ("info", "warning", …).
+            structlog.stdlib.add_log_level,
+            # ISO-8601 UTC timestamp.
+            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            # Render tracebacks into "exception" key inside the JSON envelope.
+            structlog.processors.format_exc_info,
+            # Rename the positional "event" argument to the "event" key.
+            structlog.processors.EventRenamer("event"),
+            # Final step: serialise everything to a JSON string.
             structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(_level_int),
         context_class=dict,
-        # Use the stdlib logger factory so that ``add_logger_name`` can read
-        # ``logger.name`` from the underlying stdlib Logger object.
-        logger_factory=structlog.stdlib.LoggerFactory(),
+        # PrintLoggerFactory writes directly to stdout — no stdlib routing, no
+        # double-formatting.
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
         cache_logger_on_first_use=True,
     )
 
-    # Wire stdlib so that third-party libraries route through structlog's
-    # JSONRenderer rather than their own formatting.
-    logging.basicConfig(
-        format="%(message)s",
-        stream=sys.stdout,
-        level=_level_int,
-        force=True,
-    )
-    # Feed stdlib records back through structlog's renderer.
-    logging.getLogger().handlers[0].setFormatter(
-        structlog.stdlib.ProcessorFormatter(
-            processors=[
-                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-                *_SHARED_PROCESSORS,
-                structlog.processors.JSONRenderer(),
-            ],
-            foreign_pre_chain=_SHARED_PROCESSORS,
-        )
-    )
+    # Configure the root stdlib logger for third-party libraries that emit
+    # through the stdlib (httpx, SQLAlchemy, asyncio …).  Their records go
+    # through a plain StreamHandler with a minimal text format — simple and
+    # interference-free with the structlog JSON stream above.
+    root = logging.getLogger()
+    root.setLevel(_level_int)
+    root.handlers.clear()
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    root.addHandler(handler)
 
     # Quiet down noisy third-party libraries.
     for noisy in ("httpx", "httpcore", "asyncio"):
@@ -87,7 +75,9 @@ def configure_logging(*, level: str | int = "INFO") -> None:
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     """Return a structlog bound logger for *name* (pass ``__name__``).
 
-    Safe to call at module-import time, before ``configure_logging()``
-    runs – structlog buffers records until a renderer is attached.
+    The ``name`` is bound as the ``logger`` field on every record emitted
+    through the returned logger.
+
+    Safe to call at module-import time, before ``configure_logging()`` runs.
     """
-    return structlog.get_logger(name)
+    return structlog.get_logger(name).bind(logger=name)
