@@ -31,14 +31,14 @@ from app.research.adapters.search_tavily import TavilySearchAdapter
 from app.research.ports import LLMPort, PageReaderPort, WebSearchPort
 
 __all__ = [
-    "ResearchAdapters",
-    "build_research_adapters",
     "AnthropicLLMAdapter",
     "FixtureLLMAdapter",
-    "TavilySearchAdapter",
+    "FixturePageReaderAdapter",
     "FixtureSearchAdapter",
     "HttpPageReaderAdapter",
-    "FixturePageReaderAdapter",
+    "ResearchAdapters",
+    "TavilySearchAdapter",
+    "build_research_adapters",
 ]
 
 logger = get_logger(__name__)

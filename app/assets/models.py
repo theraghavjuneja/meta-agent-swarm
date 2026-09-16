@@ -15,11 +15,18 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -72,19 +79,19 @@ class Asset(Base, IdMixin, TimestampMixin):
     )
     asset_type: Mapped[AssetType] = mapped_column(asset_type_enum, nullable=False)
     status: Mapped[AssetStatus] = mapped_column(asset_status_enum, nullable=False, default=AssetStatus.PENDING)
-    storage_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    width: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    duration_seconds: Mapped[Optional[Decimal]] = mapped_column(Numeric(4, 1), nullable=True)
+    storage_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_seconds: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
     generation_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     provider: Mapped[str] = mapped_column(String(100), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    started_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
-    attempts: Mapped[list["AssetGenerationAttempt"]] = relationship(
+    attempts: Mapped[list[AssetGenerationAttempt]] = relationship(
         back_populates="asset",
         cascade="all, delete-orphan",
         order_by="AssetGenerationAttempt.attempt_number",
@@ -106,12 +113,12 @@ class AssetGenerationAttempt(Base, IdMixin):
     )
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[AttemptStatus] = mapped_column(attempt_status_enum, nullable=False)
-    provider_request_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    provider_request_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(nullable=False)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
-    asset: Mapped["Asset"] = relationship(back_populates="attempts")
+    asset: Mapped[Asset] = relationship(back_populates="attempts")
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return f"<AssetGenerationAttempt asset_id={self.asset_id} attempt_number={self.attempt_number} status={self.status}>"

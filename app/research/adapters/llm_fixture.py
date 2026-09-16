@@ -14,8 +14,9 @@ of the adapter, callable from the running system, not a test double.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any
 
 from app.common.exceptions import InfrastructureError
 from app.common.logging import get_logger
@@ -28,7 +29,7 @@ from app.research.ports import (
     ToolUseBlock,
 )
 
-__all__ = ["FixtureLLMAdapter", "FIXTURE_ANGLES"]
+__all__ = ["FIXTURE_ANGLES", "FixtureLLMAdapter"]
 
 logger = get_logger(__name__)
 

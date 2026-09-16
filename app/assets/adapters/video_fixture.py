@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Union
 
 from app.assets.ports import GeneratedVideo, VideoRenderSpec
 from app.common.exceptions import InfrastructureError
@@ -58,7 +57,7 @@ class FixtureVideoRenderAdapter:
         self._pending_failure = force_fail_once
 
     async def render(
-        self, hero_image: Union[bytes, Path], spec: VideoRenderSpec, idempotency_key: str
+        self, hero_image: bytes | Path, spec: VideoRenderSpec, idempotency_key: str
     ) -> GeneratedVideo:
         if self._pending_failure:
             self._pending_failure = False

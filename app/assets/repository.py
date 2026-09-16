@@ -15,14 +15,19 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.assets.models import Asset, AssetGenerationAttempt, AssetStatus, AssetType, AttemptStatus
+from app.assets.models import (
+    Asset,
+    AssetGenerationAttempt,
+    AssetStatus,
+    AssetType,
+    AttemptStatus,
+)
 from app.common.exceptions import DomainError
 from app.creative.models import CreativeSpec
 
@@ -121,9 +126,9 @@ async def mark_completed(
     asset_id: UUID,
     *,
     storage_url: str,
-    width: Optional[int] = None,
-    height: Optional[int] = None,
-    duration_seconds: Optional[float] = None,
+    width: int | None = None,
+    height: int | None = None,
+    duration_seconds: float | None = None,
 ) -> Asset:
     """Marks the row completed. Only ever called by the attempt that
     actually produced the verified result and finished writing it to
@@ -155,10 +160,10 @@ async def record_attempt(
     asset_id: UUID,
     attempt_number: int,
     status: AttemptStatus,
-    provider_request_id: Optional[str],
-    error: Optional[str],
+    provider_request_id: str | None,
+    error: str | None,
     started_at: datetime,
-    completed_at: Optional[datetime],
+    completed_at: datetime | None,
 ) -> AssetGenerationAttempt:
     """One row per attempt, success or failure -- including attempts
     Temporal itself retries once Module 8 wires up the workflow's

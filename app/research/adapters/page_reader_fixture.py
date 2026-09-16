@@ -13,7 +13,7 @@ from app.common.exceptions import InfrastructureError
 from app.common.logging import get_logger
 from app.research.ports import PageContent
 
-__all__ = ["FixturePageReaderAdapter", "FIXTURE_PAGES"]
+__all__ = ["FIXTURE_PAGES", "FixturePageReaderAdapter"]
 
 logger = get_logger(__name__)
 

@@ -11,7 +11,7 @@ from app.common.exceptions import InfrastructureError
 from app.common.logging import get_logger
 from app.research.ports import SearchResult
 
-__all__ = ["FixtureSearchAdapter", "FIXTURE_RESULTS"]
+__all__ = ["FIXTURE_RESULTS", "FixtureSearchAdapter"]
 
 logger = get_logger(__name__)
 

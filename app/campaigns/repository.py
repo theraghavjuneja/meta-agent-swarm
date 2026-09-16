@@ -12,10 +12,6 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.exceptions import DomainError
-from app.common.logging import get_logger
-from app.db import session_scope
-
 from app.campaigns.dto import CampaignBrief
 from app.campaigns.models import (
     Campaign,
@@ -25,6 +21,9 @@ from app.campaigns.models import (
     StageEventType,
     StageName,
 )
+from app.common.exceptions import DomainError
+from app.common.logging import get_logger
+from app.db import session_scope
 
 logger = get_logger(__name__)
 

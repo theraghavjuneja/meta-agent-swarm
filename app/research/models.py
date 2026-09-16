@@ -24,13 +24,13 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, IdMixin, TimestampMixin
 
 __all__ = [
-    "ResearchRunStatus",
-    "ResearchStepTypeEnum",
-    "ResearchRun",
-    "ResearchStep",
-    "ResearchSource",
-    "CreativeAngle",
     "AngleSource",
+    "CreativeAngle",
+    "ResearchRun",
+    "ResearchRunStatus",
+    "ResearchSource",
+    "ResearchStep",
+    "ResearchStepTypeEnum",
     "research_run_status_enum",
     "research_step_type_enum",
 ]
@@ -93,13 +93,13 @@ class ResearchRun(Base, IdMixin, TimestampMixin):
         sa.DateTime(timezone=True), nullable=True
     )
 
-    steps: Mapped[list["ResearchStep"]] = relationship(
+    steps: Mapped[list[ResearchStep]] = relationship(
         back_populates="run", cascade="all, delete-orphan", passive_deletes=True
     )
-    sources: Mapped[list["ResearchSource"]] = relationship(
+    sources: Mapped[list[ResearchSource]] = relationship(
         back_populates="run", cascade="all, delete-orphan", passive_deletes=True
     )
-    angles: Mapped[list["CreativeAngle"]] = relationship(
+    angles: Mapped[list[CreativeAngle]] = relationship(
         back_populates="run", cascade="all, delete-orphan", passive_deletes=True
     )
 

@@ -11,9 +11,6 @@ from __future__ import annotations
 
 from temporalio import activity
 
-
-from app.common.logging import get_logger
-
 from app.campaigns import service
 from app.campaigns.dto import (
     CampaignIdInput,
@@ -23,6 +20,7 @@ from app.campaigns.dto import (
     SetWorkflowIdsInput,
 )
 from app.campaigns.models import Campaign
+from app.common.logging import get_logger
 
 logger = get_logger(__name__)
 
