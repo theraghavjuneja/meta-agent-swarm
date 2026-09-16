@@ -24,52 +24,64 @@ import sys
 
 import structlog
 
+# Processors shared between the structlog chain and the stdlib bridge so that
+# records from third-party libraries (httpx, SQLAlchemy …) are rendered the
+# same way.
+_SHARED_PROCESSORS: list = [
+    structlog.stdlib.add_log_level,
+    structlog.stdlib.add_logger_name,
+    structlog.processors.TimeStamper(fmt="iso", utc=True),
+    structlog.processors.StackInfoRenderer(),
+    structlog.processors.format_exc_info,
+    structlog.processors.EventRenamer("event"),
+]
+
 
 def configure_logging(*, level: str | int = "INFO") -> None:
-    """Configure structlog and the stdlib root logger.
+    """Configure structlog + the stdlib root logger.
 
     Call **once** at process start (e.g. in the worker/API entrypoint).
     Safe to call multiple times; subsequent calls are idempotent.
     """
+    _level_int = level if isinstance(level, int) else getattr(logging, level.upper(), logging.INFO)
+
     structlog.configure(
         processors=[
-            # Merge stdlib ``extra`` dict into the structlog event dict.
-            structlog.stdlib.ExtraAdder(),
-            # Add log level as a lower-cased string.
-            structlog.stdlib.add_log_level,
-            # Add the logger name (module path).
-            structlog.stdlib.add_logger_name,
-            # ISO-8601 UTC timestamp.
-            structlog.processors.TimeStamper(fmt="iso", utc=True),
-            # If an exception is attached, render the traceback into
-            # "exception" key so it stays inside the JSON envelope.
-            structlog.processors.format_exc_info,
-            # Re-order keys for readability: timestamp → level → logger →
-            # event → everything else.  This is cosmetic only.
-            structlog.processors.EventRenamer("event"),
+            *_SHARED_PROCESSORS,
             # Final step: serialise to JSON.
             structlog.processors.JSONRenderer(),
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            logging.getLevelName(level) if isinstance(level, str) else level
-        ),
+        wrapper_class=structlog.make_filtering_bound_logger(_level_int),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+        # Use the stdlib logger factory so that ``add_logger_name`` can read
+        # ``logger.name`` from the underlying stdlib Logger object.
+        logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
 
-    # Also configure the stdlib root logger so that libraries that emit
-    # through logging (SQLAlchemy, httpx, asyncio …) are captured.
-    _stdlib_level = level if isinstance(level, int) else getattr(logging, level.upper(), logging.INFO)
+    # Wire stdlib so that third-party libraries route through structlog's
+    # JSONRenderer rather than their own formatting.
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
-        level=_stdlib_level,
+        level=_level_int,
         force=True,
     )
+    # Feed stdlib records back through structlog's renderer.
+    logging.getLogger().handlers[0].setFormatter(
+        structlog.stdlib.ProcessorFormatter(
+            processors=[
+                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                *_SHARED_PROCESSORS,
+                structlog.processors.JSONRenderer(),
+            ],
+            foreign_pre_chain=_SHARED_PROCESSORS,
+        )
+    )
+
     # Quiet down noisy third-party libraries.
     for noisy in ("httpx", "httpcore", "asyncio"):
-        logging.getLogger(noisy).setLevel(max(logging.WARNING, _stdlib_level))
+        logging.getLogger(noisy).setLevel(max(logging.WARNING, _level_int))
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
