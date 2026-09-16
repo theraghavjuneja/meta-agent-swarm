@@ -50,7 +50,7 @@ class Settings(BaseSettings):
         description="Temporal task queue the worker polls and workflows are started on.",
     )
 
-    nthropic_api_key: str | None = Field(
+    anthropic_api_key: str | None = Field(
         default=None,
         description="Anthropic API key, used by the LLM provider adapter.",
     )

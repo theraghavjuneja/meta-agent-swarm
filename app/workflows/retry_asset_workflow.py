@@ -34,12 +34,14 @@ with workflow.unsafe.imports_passed_through():
         GenerateHeroImageOutput,
         RenderVideoInput,
         RenderVideoOutput,
+    )
+    from app.assets.dto import (
         UsageSummary as AssetUsageSummary,
     )
     from app.campaigns.activities import (
+        recompute_campaign_status,
         record_provider_usage,
         record_stage_event,
-        recompute_campaign_status,
     )
     from app.campaigns.dto import (
         CampaignIdInput,
@@ -75,7 +77,7 @@ class RetryAssetWorkflow:
     """Orchestrates the targeted regeneration of a single campaign asset."""
 
     @workflow.run
-    async def run(self, input: RetryAssetWorkflowInput) -> None:  # noqa: A002
+    async def run(self, input: RetryAssetWorkflowInput) -> None:
         campaign_id = input.campaign_id
         asset_type = input.asset_type
 

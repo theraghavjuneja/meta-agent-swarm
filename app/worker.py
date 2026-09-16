@@ -30,9 +30,9 @@ from temporalio.worker.workflow_sandbox import (
 
 from app.assets.activities import compose_ad, generate_hero_image, render_video
 from app.campaigns.activities import (
+    recompute_campaign_status,
     record_provider_usage,
     record_stage_event,
-    recompute_campaign_status,
     set_campaign_status,
     set_workflow_ids,
 )
@@ -104,7 +104,7 @@ async def _connect(settings) -> Client:
             # time.
             data_converter=pydantic_data_converter,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise InfrastructureError.wrap(
             exc,
             provider="temporal",
