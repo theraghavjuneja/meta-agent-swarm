@@ -10,9 +10,10 @@ Two capabilities, one client:
   object shaped like the schema. The caller still validates — this constrains the model, it
   does not trust it.
 
-Every provider call goes through ``app.common.retry.with_retry`` with a retryable predicate
-covering connection errors, rate limits and 5xx responses. Once retries are exhausted, the
-failure surfaces as ``InfrastructureError``; a raw SDK exception never leaves this module.
+Every provider call is made directly; any failure is normalised to ``InfrastructureError``
+before leaving this module. No per-call retry is performed here -- Temporal's own
+``RetryPolicy`` (configured on the activity that ultimately calls this adapter) governs
+retries for the whole activity.
 """
 
 from __future__ import annotations
@@ -22,7 +23,6 @@ from typing import Any
 
 from app.common.exceptions import InfrastructureError
 from app.common.logging import get_logger
-from app.common.retry import with_retry
 from app.research.ports import (
     LLMMessage,
     LLMTurn,
@@ -38,23 +38,6 @@ logger = get_logger(__name__)
 
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_TIMEOUT_SECONDS = 90.0
-
-
-def _is_retryable(exc: BaseException) -> bool:
-    """Connection failures, rate limits and server errors are worth another attempt."""
-    name = type(exc).__name__
-    if name in {
-        "APIConnectionError",
-        "APITimeoutError",
-        "RateLimitError",
-        "InternalServerError",
-        "APIStatusError",
-    }:
-        status = getattr(exc, "status_code", None)
-        if status is None:
-            return True
-        return status == 429 or status >= 500
-    return False
 
 
 class AnthropicLLMAdapter:
@@ -154,16 +137,12 @@ class AnthropicLLMAdapter:
 
     async def _create(self, **kwargs: Any) -> Any:
         try:
-            return await self._create_with_retry(**kwargs)
+            return await self._client.messages.create(**kwargs)
         except InfrastructureError:
             raise
         except Exception as exc:
             logger.error("research.anthropic.call_failed", error=repr(exc))
             raise InfrastructureError(f"Anthropic request failed: {exc}") from exc
-
-    @with_retry(max_attempts=3, is_retryable=_is_retryable)
-    async def _create_with_retry(self, **kwargs: Any) -> Any:
-        return await self._client.messages.create(**kwargs)
 
 
 def _serialise_messages(messages: Sequence[LLMMessage]) -> list[dict[str, Any]]:

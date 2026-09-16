@@ -6,9 +6,9 @@ the system depends on, not this specific provider. Swap this file out (and
 the one line in adapters/__init__.py that selects it) to change providers
 without touching activities, dto, or repository code.
 
-Assumes app.common.retry exposes:
-    async def with_retry(fn: Callable[[], Awaitable[T]]) -> T
-retrying transient failures and raising InfrastructureError on exhaustion.
+Provider calls are made directly and any failure is left to surface as-is (or wrapped in
+InfrastructureError where noted below); Temporal's own RetryPolicy on the calling activity
+governs retries, so no per-call retry wrapper is used here.
 """
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ from PIL import Image
 from app.assets.ports import GeneratedImage
 from app.common.exceptions import InfrastructureError
 from app.common.logging import get_logger
-from app.common.retry import with_retry
 from app.config import get_settings
 
 logger = get_logger(__name__)
@@ -59,7 +58,7 @@ class ReplicateImageGenerationAdapter:
                 response.raise_for_status()
                 return response.json()
 
-        payload = await with_retry(_create_prediction)
+        payload = await _create_prediction()
 
         output = payload.get("output")
         image_url = output[0] if isinstance(output, list) and output else output
@@ -72,7 +71,7 @@ class ReplicateImageGenerationAdapter:
                 image_response.raise_for_status()
                 return image_response.content
 
-        data = await with_retry(_download_image)
+        data = await _download_image()
 
         with Image.open(io.BytesIO(data)) as img:
             width, height = img.size

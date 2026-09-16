@@ -252,8 +252,10 @@ class ResearchLoop:
                 result.stop_reason = StopReason.TIMEOUT
                 break
             except InfrastructureError as exc:
-                # The adapter's own with_retry is already exhausted at this point. The loop
-                # tolerates a small number of turn failures so a transient provider outage
+                # The adapter's provider call has already failed outright at this point
+                # (no app-level retry wrapper is used; Temporal's RetryPolicy on the
+                # activity governs retries). The loop tolerates a small number of turn
+                # failures so a transient provider outage
                 # does not discard research already gathered; the attempt is written to the
                 # trace so the failure stays visible rather than silently swallowed.
                 consecutive_llm_errors += 1
