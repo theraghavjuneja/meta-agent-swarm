@@ -67,9 +67,9 @@ async def session_scope() -> AsyncGenerator[AsyncSession, None]:
     except SQLAlchemyError as exc:
         await session.rollback()
         logger.error(
-            "Database session error against %s",
-            _redact_dsn(get_settings().database_url),
-            exc_info=exc,
+            "db.session_error",
+            dsn=_redact_dsn(get_settings().database_url),
+            exc_info=True,
         )
         raise InfrastructureError("Database operation failed") from exc
     except Exception:

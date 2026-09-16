@@ -126,16 +126,14 @@ def _log_retry(
     exc: BaseException,
 ) -> None:
     logger.warning(
-        "provider call failed, retrying",
-        extra={
-            "attempt": attempt,
-            "max_attempts": max_attempts,
-            "delay_seconds": round(delay, 3),
-            "provider": provider_name,
-            "operation": op_name,
-            "error_type": type(exc).__name__,
-            "error": str(exc),
-        },
+        "provider.call_failed_retrying",
+        attempt=attempt,
+        max_attempts=max_attempts,
+        delay_seconds=round(delay, 3),
+        provider=provider_name,
+        operation=op_name,
+        error_type=type(exc).__name__,
+        error=str(exc),
     )
 
 

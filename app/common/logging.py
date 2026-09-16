@@ -1,92 +1,81 @@
+"""Structured JSON logging via structlog.
+
+Configure once at process start with ``configure_logging()``.
+Every other module obtains a logger with ``get_logger(__name__)``.
+
+Each log record is emitted as a single JSON line with the fields:
+    timestamp  – ISO-8601 UTC, e.g. "2026-09-16T11:50:00Z"
+    level      – lower-cased level name, e.g. "info"
+    logger     – dotted module path, e.g. "app.assets.adapters.storage_fixture"
+    event      – the first positional argument, e.g. "fixture_storage_saved"
+    <kwargs>   – any extra keyword arguments passed at the call site
+
+Example:
+    logger.info("research_run_started", run_id=run_id, campaign_id=campaign_id)
+
+    → {"timestamp": "2026-09-16T11:50:00Z", "level": "info",
+       "logger": "app.research.activities",
+       "event": "research_run_started", "run_id": "...", "campaign_id": "..."}
+"""
 from __future__ import annotations
 
-import json
 import logging
 import sys
-from typing import Any
 
-from app.common.context import get_correlation_id
-
-_RESERVED_LOG_RECORD_ATTRS = frozenset(vars(logging.LogRecord("", 0, "", 0, "", (), None)))
+import structlog
 
 
+def configure_logging(*, level: str | int = "INFO") -> None:
+    """Configure structlog and the stdlib root logger.
 
-class _CorrelationIdFilter(logging.Filter):
+    Call **once** at process start (e.g. in the worker/API entrypoint).
+    Safe to call multiple times; subsequent calls are idempotent.
     """
-    Stamps current correlation id with every record
-    """
-    
-    
-    def filter(self, record:logging.LogRecord)->bool:
-        
-        record.correlation_id = get_correlation_id()  # type: ignore[attr-defined]
-        return True
+    structlog.configure(
+        processors=[
+            # Merge stdlib ``extra`` dict into the structlog event dict.
+            structlog.stdlib.ExtraAdder(),
+            # Add log level as a lower-cased string.
+            structlog.stdlib.add_log_level,
+            # Add the logger name (module path).
+            structlog.stdlib.add_logger_name,
+            # ISO-8601 UTC timestamp.
+            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            # If an exception is attached, render the traceback into
+            # "exception" key so it stays inside the JSON envelope.
+            structlog.processors.format_exc_info,
+            # Re-order keys for readability: timestamp → level → logger →
+            # event → everything else.  This is cosmetic only.
+            structlog.processors.EventRenamer("event"),
+            # Final step: serialise to JSON.
+            structlog.processors.JSONRenderer(),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(
+            logging.getLevelName(level) if isinstance(level, str) else level
+        ),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+        cache_logger_on_first_use=True,
+    )
 
-
-def _extra_fields(record: logging.LogRecord) -> dict[str, Any]:
-    
-    exclude = _RESERVED_LOG_RECORD_ATTRS | {"correlation_id", "message", "asctime"}
-    return {k: v for k, v in vars(record).items() if k not in exclude}
- 
- 
-class _JsonFormatter(logging.Formatter):
-    def format(self, record:logging.LogRecord)->str:
-        payload: dict[str, Any] = {
-            "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
-            "correlation_id": getattr(record, "correlation_id", None),
-        }
-        payload.update(_extra_fields(record))
-        if record.exc_info:
-            payload["exc_info"] = self.formatException(record.exc_info)
-        return json.dumps(payload, default=str)
-
-class _ConsoleFormatter(logging.Formatter):
-    def format(self, record: logging.LogRecord) -> str:
-        cid = getattr(record, "correlation_id", None) or "-"
-        extra = _extra_fields(record)
-        suffix = f" {extra}" if extra else ""
-        base = (
-            f"{self.formatTime(record, '%H:%M:%S')} {record.levelname:<8} "
-            f"[{cid}] {record.name}: {record.getMessage()}{suffix}"
-        )
-        if record.exc_info:
-            base += "\n" + self.formatException(record.exc_info)
-        return base
-
-def configure_logging(*, json_format: bool = True, level: str | int = "INFO") -> None:
-    """
-    Configure the root logger. call once at process start
-    """
-    root = logging.getLogger()
-    root.setLevel(level)
-    root.handlers.clear()
- 
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(_JsonFormatter() if json_format else _ConsoleFormatter())
-    handler.addFilter(_CorrelationIdFilter())
-    root.addHandler(handler)
-    
-    effective_level = root.getEffectiveLevel()
+    # Also configure the stdlib root logger so that libraries that emit
+    # through logging (SQLAlchemy, httpx, asyncio …) are captured.
+    _stdlib_level = level if isinstance(level, int) else getattr(logging, level.upper(), logging.INFO)
+    logging.basicConfig(
+        format="%(message)s",
+        stream=sys.stdout,
+        level=_stdlib_level,
+        force=True,
+    )
+    # Quiet down noisy third-party libraries.
     for noisy in ("httpx", "httpcore", "asyncio"):
-        logging.getLogger(noisy).setLevel(max(logging.WARNING, effective_level))
- 
- 
-def get_logger(name: str) -> logging.Logger:
+        logging.getLogger(noisy).setLevel(max(logging.WARNING, _stdlib_level))
+
+
+def get_logger(name: str) -> structlog.stdlib.BoundLogger:
+    """Return a structlog bound logger for *name* (pass ``__name__``).
+
+    Safe to call at module-import time, before ``configure_logging()``
+    runs – structlog buffers records until a renderer is attached.
     """
-    eturn a stdlib `Logger` for `name`.
- 
-    Once :func:`configure_logging` has run, every record emitted through
-    this logger automatically carries the current correlation id -- no
-    per-call-site plumbing required. Safe to call before
-    `configure_logging()` too (e.g. at module import time); the logger just
-    won't produce output until a handler exists on the root logger.
-
-    """
-    
-    return logging.getLogger(name)
-
-
-    
+    return structlog.get_logger(name)
