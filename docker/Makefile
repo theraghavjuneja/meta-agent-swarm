@@ -12,7 +12,7 @@ COMPOSE := docker compose -f docker-compose-local.yml
 .PHONY: local local-d down stop logs logs-api logs-worker logs-temporal ps build \
         migrate makemigration downgrade current history psql clean
 
-## Bring up the full stack in the foreground (Ctrl-C stops it). Primary entrypoint.
+
 local:
 	$(COMPOSE) up --build
 

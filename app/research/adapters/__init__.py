@@ -39,6 +39,7 @@ __all__ = [
     "ResearchAdapters",
     "TavilySearchAdapter",
     "build_research_adapters",
+    "get_llm_port",
 ]
 
 logger = get_logger(__name__)
@@ -93,3 +94,8 @@ def build_research_adapters(settings: Any | None = None) -> ResearchAdapters:
     )
     logger.info("research.adapters.built", provider_mode=mode)
     return adapters
+
+
+def get_llm_port(settings: Any | None = None) -> LLMPort:
+    """Return just the LLMPort adapter for workflows that only need LLM."""
+    return build_research_adapters(settings).llm

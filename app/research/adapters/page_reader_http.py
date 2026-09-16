@@ -112,7 +112,7 @@ class HttpPageReaderAdapter:
             )
             raise InfrastructureError(f"Failed to fetch {url}: {exc}") from exc
 
-    @with_retry(max_attempts=3, retryable=_is_retryable)
+    @with_retry(max_attempts=3, is_retryable=_is_retryable)
     async def _fetch_with_retry(self, url: str) -> Any:
         async with self._httpx.AsyncClient(
             follow_redirects=True,
