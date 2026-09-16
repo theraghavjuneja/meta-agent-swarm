@@ -88,3 +88,6 @@ psql:
 ## Full teardown: stop everything AND delete volumes (app DB data + Temporal history/ES data). Destructive.
 clean:
 	$(COMPOSE) down -v
+## Restart the worker container (useful to pick up file changes)
+restart-worker:
+	$(COMPOSE) restart worker
