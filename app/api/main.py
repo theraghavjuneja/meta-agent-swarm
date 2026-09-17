@@ -1,25 +1,4 @@
-"""FastAPI application wiring.
 
-This is where ``app.common``'s deliberately FastAPI-free exception hierarchy
-finally meets FastAPI, and the mapping is the whole point of the file:
-
-    ValidationError       -> 422  (bad input, nothing happened)
-    DomainError           -> 409  (valid input, wrong state) unless the
-                                   instance overrides it, which is how 404s
-                                   are expressed without a second mechanism
-    InfrastructureError   -> 502  (a dependency failed; not the caller's fault)
-
-Each type's own ``default_http_status`` is the source of that mapping rather
-than a lookup table here, so the codes cannot drift apart from the
-hierarchy.
-
-Run with::
-
-    uvicorn app.api.main:app --reload
-
-and, in a second process, ``python -m app.worker``. The API never executes
-activities - it starts workflows, signals them, and reads the database.
-"""
 
 from __future__ import annotations
 
@@ -32,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.routers import campaigns_router
@@ -48,9 +28,6 @@ from app.config import get_settings
 logger = get_logger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Lifespan
-# ---------------------------------------------------------------------------
 
 
 @asynccontextmanager
@@ -64,9 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     accept requests it must then reject.
     """
     settings = get_settings()
-    # Settings exposes no log_format/log_level field today, so this reads
-    # defensively. See the module notes: configure_logging's own parameter is
-    # `level`, and the JSON renderer is unconditional.
+    
     configure_logging(level=getattr(settings, "log_level", "INFO"))
 
     logger.info(
@@ -100,15 +75,29 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Mount local storage directory as static files if using local storage
+_settings = get_settings()
+if _settings.storage_backend == "local":
+    import os
+    os.makedirs(_settings.local_storage_path, exist_ok=True)
+    app.mount(
+        "/assets", 
+        StaticFiles(directory=_settings.local_storage_path), 
+        name="assets"
+    )
 
-# ---------------------------------------------------------------------------
-# CORS
-# ---------------------------------------------------------------------------
+# Always mount fixtures so older fixture campaigns can still be viewed
+# even if the server is currently running in 'real' mode.
+import os
+from app.assets.adapters.storage_fixture import _FIXTURE_STORAGE_DIR
+os.makedirs(_FIXTURE_STORAGE_DIR, exist_ok=True)
+app.mount(
+    "/fixtures",
+    StaticFiles(directory=str(_FIXTURE_STORAGE_DIR)),
+    name="fixtures"
+)
 
-# Deliberately permissive: the frontend is a later, out-of-scope module and
-# there is no auth in this project, so there are no credentials to protect
-# here. `allow_credentials` stays False so this stays a wildcard rather than
-# quietly becoming a cross-origin credential leak if auth is added later.
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -125,23 +114,6 @@ app.add_middleware(
 
 @app.middleware("http")
 async def bind_log_context(request: Request, call_next):
-    """Bind ``request_id``, and ``campaign_id`` when the path carries one.
-
-    Every log line emitted while handling the request - including from a
-    repository or an adapter several layers down - then carries the campaign
-    it belongs to, which is what makes a single campaign's story greppable
-    across the API and worker logs.
-
-    Two caveats worth knowing:
-
-    * ``app.common.context`` was emptied out, so this binds through
-      ``structlog.contextvars`` directly instead.
-    * ``configure_logging()``'s processor chain does not currently include
-      ``structlog.contextvars.merge_contextvars``, so these bound values are
-      stored but not yet rendered. Adding that one processor as the first
-      entry in the chain turns this on; it lives in ``app/common``, which is
-      outside this module's scope.
-    """
     structlog.contextvars.clear_contextvars()
 
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
@@ -164,13 +136,7 @@ async def bind_log_context(request: Request, call_next):
 
 
 def _campaign_id_from_path(path: str) -> str | None:
-    """Pull the campaign id out of the raw path.
-
-    Middleware runs before routing, so ``request.path_params`` is usually
-    empty at this point; the segment after ``/campaigns`` is parsed instead.
-    It is only used as a log field, and it is validated as a UUID so a
-    garbage path segment cannot inject arbitrary text into the log stream.
-    """
+    
     parts = [p for p in path.split("/") if p]
     if len(parts) < 2 or parts[0] != "campaigns":
         return None
@@ -205,13 +171,7 @@ async def handle_validation_error(
 
 @app.exception_handler(DomainError)
 async def handle_domain_error(request: Request, exc: DomainError) -> JSONResponse:
-    """409 by default; 404 when the instance sets ``http_status``.
-
-    Reading the status off the instance is what lets "campaign not found"
-    and "angle already selected" share one exception type and one handler
-    while still producing the right code - rather than routers raising
-    ``HTTPException`` for one and ``DomainError`` for the other.
-    """
+    
     logger.info("domain_error", code=exc.code, message=exc.message)
     return _error_response(exc, exc.default_http_status)
 
@@ -220,13 +180,7 @@ async def handle_domain_error(request: Request, exc: DomainError) -> JSONRespons
 async def handle_infrastructure_error(
     request: Request, exc: InfrastructureError
 ) -> JSONResponse:
-    """502. A dependency (Temporal, the database, storage, a provider) failed.
-
-    Logged with the full provider/operation/cause context the exception
-    carries, but the response body stays the plain ``code``/``message``
-    envelope - the cause's text can contain DSNs, provider request bodies and
-    other things that should not leave the process.
-    """
+    
     logger.error("infrastructure_error", **exc.to_log_context(), exc_info=True)
     return JSONResponse(
         status_code=exc.default_http_status,

@@ -65,7 +65,7 @@ def build_research_adapters(settings: Any | None = None) -> ResearchAdapters:
     if mode == FIXTURE_MODE:
         adapters = ResearchAdapters(
             llm=FixtureLLMAdapter(
-                model_name=str(getattr(settings, "anthropic_model", "fixture-model")),
+                model_name=str(getattr(settings, "openai_model", "fixture-model")),
                 fail_times=int(getattr(settings, "research_fixture_fail_llm", 0) or 0),
             ),
             search=FixtureSearchAdapter(
@@ -83,8 +83,8 @@ def build_research_adapters(settings: Any | None = None) -> ResearchAdapters:
 
     adapters = ResearchAdapters(
         llm=AnthropicLLMAdapter(
-            api_key=str(getattr(settings, "groq_api_key", "") or ""),
-            model=str(getattr(settings, "groq_model", "")),
+            api_key=str(getattr(settings, "openai_api_key", "")),
+            model=str(getattr(settings, "openai_model", "") or "gpt-4o"),
         ),
         search=TavilySearchAdapter(
             api_key=str(getattr(settings, "tavily_api_key", "") or "")

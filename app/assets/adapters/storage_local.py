@@ -1,6 +1,6 @@
 """Local-filesystem StoragePort adapter.
 
-Writes under a configured base path and returns a `file://` URL. A valid
+Writes under a configured base path and returns an HTTP URL hosted by the local FastAPI server. A valid
 "real" backend alongside the S3-compatible adapter -- StoragePort is kept
 provider-agnostic on purpose.
 """
@@ -20,7 +20,7 @@ _DEFAULT_BASE_PATH = "./data/assets"
 class LocalFilesystemStorageAdapter:
     def __init__(self, base_path: Path | str | None = None) -> None:
         settings = get_settings()
-        configured = base_path or getattr(settings, "local_storage_base_path", None) or _DEFAULT_BASE_PATH
+        configured = base_path or getattr(settings, "local_storage_path", None) or _DEFAULT_BASE_PATH
         self._base_path = Path(configured)
         self._base_path.mkdir(parents=True, exist_ok=True)
 
@@ -29,4 +29,9 @@ class LocalFilesystemStorageAdapter:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
         logger.info("local_storage_saved", key=key, bytes=len(data))
-        return StoredAsset(storage_url=target.resolve().as_uri())
+        
+        settings = get_settings()
+        api_base = getattr(settings, "api_base_url", "http://localhost:8000").rstrip("/")
+        url = f"{api_base}/assets/{key.lstrip('/')}"
+        
+        return StoredAsset(storage_url=url)

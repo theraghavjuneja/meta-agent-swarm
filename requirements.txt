@@ -28,5 +28,6 @@ boto3==1.43.95                   # S3-compatible storage adapter (boto3 + botoco
 # --- Image processing (compositing.py) -------------------------------------------
 Pillow==12.3.0
 
-google-genai=2.24.0
+google-genai==2.24.0
 groq==1.7.0
+openai>=1.0.0

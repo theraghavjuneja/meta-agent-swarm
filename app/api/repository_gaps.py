@@ -28,21 +28,10 @@ __all__ = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Research reads
-# MOVE TO: app.research.repository
-# ---------------------------------------------------------------------------
-
-
 async def get_latest_research_run(
     session: AsyncSession, campaign_id: UUID
 ) -> ResearchRun | None:
-    """Most recent research run for a campaign, or None.
 
-    "Latest" rather than "the" run because ``research_runs`` is append-only
-    by design - re-running research inserts a new row - so a campaign can
-    legitimately have several.
-    """
     result = await session.execute(
         sa.select(ResearchRun)
         .where(ResearchRun.campaign_id == campaign_id)
@@ -76,12 +65,7 @@ async def list_sources(
 async def list_angles(
     session: AsyncSession, research_run_id: UUID
 ) -> list[CreativeAngle]:
-    """Angles with their linked sources eagerly loaded.
-
-    ``selectinload`` is explicit here even though ``CreativeAngle.sources``
-    is already ``lazy="selectin"``, so that this read does not depend on a
-    model-level default that someone could reasonably change later.
-    """
+    
     result = await session.execute(
         sa.select(CreativeAngle)
         .where(CreativeAngle.research_run_id == research_run_id)
@@ -91,36 +75,12 @@ async def list_angles(
     return list(result.scalars().all())
 
 
-# ---------------------------------------------------------------------------
-# Angle selection
-# MOVE TO: app.research.repository (the query) + a research service (the rule)
-#
-# This is the one genuinely domain-level thing in this file. The
-# "an angle can be selected only once" rule is a state-machine invariant and
-# should not live behind an HTTP handler.
-# ---------------------------------------------------------------------------
 
 
 async def select_angle(
     session: AsyncSession, *, campaign_id: UUID, angle_id: UUID
 ) -> CreativeAngle:
-    """Mark one angle selected, rejecting a second selection.
-
-    Three things are checked, all of them 409-worthy rather than 500-worthy:
-
-    * the angle exists;
-    * it belongs to a research run for *this* campaign (so an angle id
-      lifted from another campaign cannot be selected here);
-    * no angle on that run is already selected.
-
-    The database also has a partial unique index
-    (``idx_creative_angles_one_selected``) enforcing one selected angle per
-    run, so the check here is the friendly error message and the index is
-    the actual guarantee. That ordering matters: under two concurrent
-    requests the index wins and the loser gets an IntegrityError, which
-    ``session_scope`` surfaces as ``InfrastructureError``. Slightly blunt,
-    but never a double-selected run.
-    """
+   
     angle = await session.get(CreativeAngle, angle_id)
     if angle is None:
         raise DomainError(
@@ -161,15 +121,6 @@ async def select_angle(
     return angle
 
 
-# ---------------------------------------------------------------------------
-# Asset reads
-# MOVE TO: app.assets.repository
-#
-# ``list_assets_by_campaign`` is additionally referenced by
-# ``app.campaigns.repository.recompute_status_from_assets`` via
-# ``from app.assets.repository import list_assets_by_campaign`` - an import
-# that currently fails. Moving this function there fixes that too.
-# ---------------------------------------------------------------------------
 
 
 async def list_assets_by_campaign(
@@ -194,12 +145,6 @@ async def get_hero_asset(session: AsyncSession, campaign_id: UUID) -> Asset | No
     return result.scalar_one_or_none()
 
 
-# ---------------------------------------------------------------------------
-# Usage aggregation
-# MOVE TO: app.campaigns.repository
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class UsageRow:
     provider: str
@@ -212,14 +157,7 @@ class UsageRow:
 
 
 async def aggregate_usage(session: AsyncSession, campaign_id: UUID) -> list[UsageRow]:
-    """Group ``provider_usage`` by provider/operation/unit_type/is_estimated.
 
-    ``is_estimated`` is part of the grouping key on purpose. Collapsing an
-    estimated row and a metered row into one total would produce a number
-    that is neither, and the brief is explicit that estimates must be
-    clearly labelled. Keeping them in separate rows means the response can
-    label each one honestly and the caller can choose whether to add them.
-    """
     stmt = (
         sa.select(
             ProviderUsage.provider,

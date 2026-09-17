@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.assets.adapters.image_fixture import FixtureImageGenerationAdapter
-from app.assets.adapters.image_replicate import ReplicateImageGenerationAdapter
+from app.assets.adapters.image_openai import OpenAIImageGenerationAdapter
 from app.assets.adapters.storage_fixture import FixtureStorageAdapter
 from app.assets.adapters.storage_local import LocalFilesystemStorageAdapter
 from app.assets.adapters.storage_s3 import S3CompatibleStorageAdapter
@@ -35,7 +35,7 @@ def get_image_adapter(settings=None, *, force_fail_once: bool = False) -> ImageG
     settings = settings or get_settings()
     if settings.provider_mode == "fixture":
         return FixtureImageGenerationAdapter(force_fail_once=force_fail_once)
-    return ReplicateImageGenerationAdapter()
+    return OpenAIImageGenerationAdapter()
 
 
 def get_video_adapter(settings=None, *, force_fail_once: bool = False) -> VideoRenderPort:
