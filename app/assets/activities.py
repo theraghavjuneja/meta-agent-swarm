@@ -1,16 +1,16 @@
 """Temporal activities for app/assets.
 
 Each activity: resolves the asset row via `ensure_pending`, computes the
-idempotency key, calls `mark_generating`, calls the relevant port
-(wrapped in `app.common.retry.with_retry`), and on success writes the result
-via `StoragePort` then calls `mark_completed`. An `asset_generation_attempts`
-row is recorded either way. A row is only ever marked completed by the attempt
-that actually produced the verified result and finished writing it to storage
--- never optimistically.
+idempotency key, calls `mark_generating`, calls the relevant port directly,
+and on success writes the result via `StoragePort` then calls `mark_completed`.
+An `asset_generation_attempts` row is recorded either way. A row is only ever
+marked completed by the attempt that actually produced the verified result
+and finished writing it to storage -- never optimistically.
 
-`with_retry`'s own exhaustion surfaces as `InfrastructureError`, which these
-activities let propagate uncaught (after recording the failed attempt) so
-that Temporal's own RetryPolicy governs whole-activity retries.
+Ports raise `InfrastructureError` on provider failure, which these activities
+let propagate uncaught (after recording the failed attempt) so that Temporal's
+own RetryPolicy governs whole-activity retries. No app-level retry wrapper is
+used here -- retrying is Temporal's job.
 """
 from __future__ import annotations
 
@@ -51,7 +51,6 @@ from app.assets.repository import (
 )
 from app.common.exceptions import InfrastructureError, ValidationError
 from app.common.logging import get_logger
-from app.common.retry import with_retry
 from app.db import session_scope
 
 logger = get_logger(__name__)
@@ -78,14 +77,50 @@ async def _fetch_bytes(storage_url: str) -> bytes:
 
     Not covered by `StoragePort` (the port only defines `save`, per this
     module's spec), so this is a small local helper that understands the
-    two URL shapes the adapters in this module produce: `file://` (local
-    and fixture storage adapters) and `http(s)://` (S3-compatible adapter,
-    whether presigned or served from a public base URL).
+    URL shapes the adapters in this module produce: `file://` (used by
+    older/alternate storage adapters), the api's own `{api_base}/assets/...`
+    and `{api_base}/fixtures/...` static paths (local-storage and
+    fixture-storage adapters respectively -- read straight off the shared
+    bind-mounted disk rather than over HTTP, since the worker container has
+    no uvicorn listening on that host:port), and generic `http(s)://` for
+    everything else (S3-compatible adapter, whether presigned or served
+    from a public base URL).
     """
     if storage_url.startswith("file://"):
         parsed = urlparse(storage_url)
         path = url2pathname(parsed.path)
         with open(path, "rb") as f:
+            return f.read()
+
+    from app.config import get_settings
+    from pathlib import Path
+    from app.assets.adapters.storage_fixture import _FIXTURE_STORAGE_DIR
+
+    settings = get_settings()
+    api_base = getattr(settings, "api_base_url", "http://localhost:8000").rstrip("/")
+
+    # Both of these are URLs meant for a *browser* to load a static file from
+    # the api container's uvicorn process. Resolving them the same way here
+    # -- an httpx GET against api_base_url -- would work fine from a browser
+    # on the host, but not from the worker container: nothing listens on
+    # localhost:8000 *inside* the worker container (only `api` runs
+    # uvicorn). Since both directories are on the same bind mount
+    # (`..:/code`) shared by api and worker, we read the bytes straight off
+    # disk instead of round-tripping over HTTP -- mirroring exactly what
+    # StaticFiles would have served, for both the local-storage adapter
+    # (storage_local.py) and the fixture-storage adapter (storage_fixture.py).
+    assets_prefix = f"{api_base}/assets/"
+    if storage_url.startswith(assets_prefix):
+        key = storage_url[len(assets_prefix):]
+        local_path = Path(settings.local_storage_path) / key
+        with open(local_path, "rb") as f:
+            return f.read()
+
+    fixtures_prefix = f"{api_base}/fixtures/"
+    if storage_url.startswith(fixtures_prefix):
+        key = storage_url[len(fixtures_prefix):]
+        local_path = Path(_FIXTURE_STORAGE_DIR) / key
+        with open(local_path, "rb") as f:
             return f.read()
 
     async with httpx.AsyncClient(timeout=60) as client:
@@ -104,7 +139,7 @@ async def _record_success(session, *, asset_id: UUID, attempt_started_at: dateti
         provider_request_id=provider_request_id,
         error=None,
         started_at=attempt_started_at,
-        completed_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
 
@@ -118,14 +153,14 @@ async def _record_failure(session, *, asset_id: UUID, attempt_started_at: dateti
         provider_request_id=None,
         error=error,
         started_at=attempt_started_at,
-        completed_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     await mark_failed(session, asset_id, error)
 
 
 @activity.defn
 async def generate_hero_image(input: GenerateHeroImageInput) -> GenerateHeroImageOutput:
-    provider = "replicate-flux"
+    provider = "openai"
 
     async with session_scope() as session:
         spec = await get_creative_spec(session, input.creative_spec_id)
@@ -139,17 +174,17 @@ async def generate_hero_image(input: GenerateHeroImageInput) -> GenerateHeroImag
         )
         idempotency_key = derive_idempotency_key(input.campaign_id, AssetType.HERO_IMAGE)
         asset = await mark_generating(session, asset.id)
-        attempt_started_at = datetime.now(timezone.utc)
+        attempt_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         try:
             image_adapter = get_image_adapter()
-            generated = await with_retry(lambda: image_adapter.generate(spec.scene_description, idempotency_key))
+            generated = await image_adapter.generate(spec.scene_description, idempotency_key)
             image_bytes = generated.read_bytes()
 
             storage_adapter = get_storage_adapter()
             key = _storage_key(input.campaign_id, AssetType.HERO_IMAGE, "jpg")
-            stored = await with_retry(
-                lambda: storage_adapter.save(image_bytes, key, _STORAGE_CONTENT_TYPES[AssetType.HERO_IMAGE])
+            stored = await storage_adapter.save(
+                image_bytes, key, _STORAGE_CONTENT_TYPES[AssetType.HERO_IMAGE]
             )
 
             asset = await mark_completed(
@@ -211,7 +246,7 @@ async def compose_ad(input: ComposeAdInput) -> ComposeAdOutput:
             provider=provider,
         )
         asset = await mark_generating(session, asset.id)
-        attempt_started_at = datetime.now(timezone.utc)
+        attempt_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         try:
             hero_bytes = await _fetch_bytes(hero_asset.storage_url)
@@ -220,8 +255,8 @@ async def compose_ad(input: ComposeAdInput) -> ComposeAdOutput:
 
             storage_adapter = get_storage_adapter()
             key = _storage_key(input.campaign_id, asset_type, "jpg")
-            stored = await with_retry(
-                lambda: storage_adapter.save(composed_bytes, key, _STORAGE_CONTENT_TYPES[asset_type])
+            stored = await storage_adapter.save(
+                composed_bytes, key, _STORAGE_CONTENT_TYPES[asset_type]
             )
 
             width, height = _AD_DIMENSIONS[asset_type]
@@ -267,7 +302,7 @@ async def render_video(input: RenderVideoInput) -> RenderVideoOutput:
         )
         idempotency_key = derive_idempotency_key(input.campaign_id, AssetType.VIDEO)
         asset = await mark_generating(session, asset.id)
-        attempt_started_at = datetime.now(timezone.utc)
+        attempt_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         outline = spec.video_outline or {}
         render_spec = VideoRenderSpec(
@@ -282,13 +317,13 @@ async def render_video(input: RenderVideoInput) -> RenderVideoOutput:
             hero_bytes = await _fetch_bytes(hero_asset.storage_url)
 
             video_adapter = get_video_adapter()
-            generated = await with_retry(lambda: video_adapter.render(hero_bytes, render_spec, idempotency_key))
+            generated = await video_adapter.render(hero_bytes, render_spec, idempotency_key)
             video_bytes = generated.read_bytes()
 
             storage_adapter = get_storage_adapter()
             key = _storage_key(input.campaign_id, AssetType.VIDEO, "mp4")
-            stored = await with_retry(
-                lambda: storage_adapter.save(video_bytes, key, _STORAGE_CONTENT_TYPES[AssetType.VIDEO])
+            stored = await storage_adapter.save(
+                video_bytes, key, _STORAGE_CONTENT_TYPES[AssetType.VIDEO]
             )
 
             asset = await mark_completed(

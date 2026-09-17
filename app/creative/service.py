@@ -1,11 +1,10 @@
 """Creative spec generation: prompt -> LLM structured output -> validate -> persist.
 
 Corrective retry (schema validation failing and re-prompting with the error) is
-kept local to this module rather than routed through ``app.common.retry`` —
-``with_retry`` is for infra-level transport failures and already wraps the real
-LLM adapter's HTTP calls (Module 4). Validation-driven retries are a different
-kind of failure (content quality, not transport) and live here, bounded by
-``MAX_CORRECTIVE_ATTEMPTS``.
+kept local to this module. It is a different kind of failure from an infra-level
+transport error (content quality, not transport), so it is not something
+Temporal's activity-level RetryPolicy could sensibly handle; it lives here,
+bounded by ``MAX_CORRECTIVE_ATTEMPTS``.
 
 ASSUMED INTERFACES (Modules 1-4) — this file is written against the following
 shapes. They match what the Module 5 brief describes but weren't given verbatim,
@@ -36,10 +35,6 @@ call sites below if names differ:
           .usage: object with .provider, .prompt_tokens, .completion_tokens,
                   .total_tokens, .estimated_cost_usd, .is_estimated
                   (all optional/None where the provider doesn't report them)
-
-    app.common.retry.with_retry
-        Already applied inside the real LLMPort adapter for transport failures;
-        not called directly from this module.
 """
 
 from __future__ import annotations
@@ -61,6 +56,7 @@ from app.creative.dto import (
 )
 from app.research import repository as research_repository
 from app.research.adapters import get_llm_port
+from app.research.ports import LLMMessage, TextBlock
 
 __all__ = ["MAX_CORRECTIVE_ATTEMPTS", "generate_creative_spec"]
 
@@ -151,10 +147,12 @@ async def generate_creative_spec(
     for attempt in range(1, MAX_CORRECTIVE_ATTEMPTS + 1):
         prompt = base_prompt if last_error is None else _corrective_prompt(base_prompt, last_error)
 
-        result = await llm.generate_structured(
+        result = await llm.structured_output(
             system=_SYSTEM_PROMPT,
-            prompt=prompt,
-            response_schema=CreativeSpecSchema,
+            messages=[LLMMessage(role="user", content=[TextBlock(text=prompt)])],
+            schema=CreativeSpecSchema.model_json_schema(),
+            schema_name="CreativeSpecSchema",
+            schema_description="A single creative spec version for a campaign.",
         )
         usage_raw = result.usage
 
@@ -173,8 +171,7 @@ async def generate_creative_spec(
     if validated is None:
         raise DomainError(
             "creative spec generation failed schema validation after "
-            f"{MAX_CORRECTIVE_ATTEMPTS} attempts",
-            details={"validation_error": str(last_error)},
+            f"{MAX_CORRECTIVE_ATTEMPTS} attempts. Last error: {str(last_error)}"
         )
 
     spec_row = await repository.create_version(
@@ -194,13 +191,20 @@ async def generate_creative_spec(
         },
     )
 
+    input_tokens = getattr(usage_raw, "input_tokens", None)
+    output_tokens = getattr(usage_raw, "output_tokens", None)
+    total_tokens = (
+        input_tokens + output_tokens
+        if input_tokens is not None and output_tokens is not None
+        else None
+    )
     usage = UsageSummary(
-        provider=getattr(usage_raw, "provider", None) or settings.provider_mode,
-        prompt_tokens=getattr(usage_raw, "prompt_tokens", None),
-        completion_tokens=getattr(usage_raw, "completion_tokens", None),
-        total_tokens=getattr(usage_raw, "total_tokens", None),
-        estimated_cost_usd=getattr(usage_raw, "estimated_cost_usd", None),
-        is_estimated=bool(getattr(usage_raw, "is_estimated", False)),
+        provider=settings.provider_mode,
+        prompt_tokens=input_tokens,
+        completion_tokens=output_tokens,
+        total_tokens=total_tokens,
+        estimated_cost_usd=None,
+        is_estimated=True,
     )
 
     return GenerateSpecOutput(

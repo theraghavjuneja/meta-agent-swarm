@@ -37,6 +37,11 @@ class Settings(BaseSettings):
         description="Async Postgres DSN (SQLAlchemy 2.0 async driver, e.g. asyncpg).",
     )
 
+    api_base_url: str = Field(
+        default="http://localhost:8000",
+        description="The base URL of this API, used to construct absolute URLs to static assets.",
+    )
+
     temporal_host: str = Field(
         default="localhost:7233",
         description="Temporal server address (host:port) for the worker to connect to.",
@@ -50,21 +55,17 @@ class Settings(BaseSettings):
         description="Temporal task queue the worker polls and workflows are started on.",
     )
 
-    nthropic_api_key: str | None = Field(
+    openai_api_key: str | None = Field(
         default=None,
-        description="Anthropic API key, used by the LLM provider adapter.",
+        description="OpenAI API key, used by the LLM provider adapter.",
     )
-    anthropic_model: str = Field(
-        default="claude-sonnet-5",
-        description="Default Anthropic model name for the LLM provider adapter.",
+    openai_model: str = Field(
+        default="gpt-4o",
+        description="Default OpenAI model name for the LLM provider adapter.",
     )
     tavily_api_key: str | None = Field(
         default=None,
         description="Tavily API key, used by the web search / page reader provider adapter.",
-    )
-    replicate_api_token: str | None = Field(
-        default=None,
-        description="Replicate API token, used by the image generation provider adapter.",
     )
 
     storage_backend: Literal["local", "s3"] = Field(
@@ -72,7 +73,7 @@ class Settings(BaseSettings):
         description="Which StoragePort adapter to construct: local filesystem or S3-compatible.",
     )
     local_storage_path: str = Field(
-        default="./data/storage",
+        default="./data/assets",
         description="Base path on disk used when storage_backend='local'.",
     )
     s3_bucket: str | None = Field(
@@ -175,9 +176,8 @@ class Settings(BaseSettings):
 
         if self.provider_mode == "real":
             required_provider_keys = {
-                "ANTHROPIC_API_KEY": self.anthropic_api_key,
+                "OPENAI_API_KEY": self.openai_api_key,
                 "TAVILY_API_KEY": self.tavily_api_key,
-                "REPLICATE_API_TOKEN": self.replicate_api_token,
             }
             errors += [
                 name for name, value in required_provider_keys.items() if not value

@@ -39,6 +39,7 @@ __all__ = [
     "ResearchAdapters",
     "TavilySearchAdapter",
     "build_research_adapters",
+    "get_llm_port",
 ]
 
 logger = get_logger(__name__)
@@ -64,7 +65,7 @@ def build_research_adapters(settings: Any | None = None) -> ResearchAdapters:
     if mode == FIXTURE_MODE:
         adapters = ResearchAdapters(
             llm=FixtureLLMAdapter(
-                model_name=str(getattr(settings, "anthropic_model", "fixture-model")),
+                model_name=str(getattr(settings, "openai_model", "fixture-model")),
                 fail_times=int(getattr(settings, "research_fixture_fail_llm", 0) or 0),
             ),
             search=FixtureSearchAdapter(
@@ -82,8 +83,8 @@ def build_research_adapters(settings: Any | None = None) -> ResearchAdapters:
 
     adapters = ResearchAdapters(
         llm=AnthropicLLMAdapter(
-            api_key=str(getattr(settings, "anthropic_api_key", "") or ""),
-            model=str(getattr(settings, "anthropic_model", "")),
+            api_key=str(getattr(settings, "openai_api_key", "")),
+            model=str(getattr(settings, "openai_model", "") or "gpt-4o"),
         ),
         search=TavilySearchAdapter(
             api_key=str(getattr(settings, "tavily_api_key", "") or "")
@@ -93,3 +94,8 @@ def build_research_adapters(settings: Any | None = None) -> ResearchAdapters:
     )
     logger.info("research.adapters.built", provider_mode=mode)
     return adapters
+
+
+def get_llm_port(settings: Any | None = None) -> LLMPort:
+    """Return just the LLMPort adapter for workflows that only need LLM."""
+    return build_research_adapters(settings).llm

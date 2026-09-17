@@ -1,3 +1,5 @@
 prompt.md
 db.md
 venv/
+.env
+docker/.env

@@ -14,12 +14,15 @@ FastAPI-dependency form doesn't apply here) -- consistent with how Modules
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db import session_scope
 
 from app.assets.models import (
     Asset,
@@ -180,3 +183,31 @@ async def record_attempt(
     session.add(attempt)
     await session.flush()
     return attempt
+
+
+@dataclass(frozen=True)
+class AssetStageSummary:
+    stage_name: str
+    status: str
+
+
+async def list_assets_by_campaign(campaign_id: UUID) -> list[AssetStageSummary]:
+    """Returns a simplified view of a campaign's assets for the campaign aggregator."""
+    stage_map = {
+        AssetType.HERO_IMAGE: "hero_image",
+        AssetType.AD_1X1: "compose_1x1",
+        AssetType.AD_9X16: "compose_9x16",
+        AssetType.VIDEO: "render_video",
+    }
+
+    async with session_scope() as session:
+        result = await session.execute(
+            select(Asset).where(Asset.campaign_id == campaign_id)
+        )
+        return [
+            AssetStageSummary(
+                stage_name=stage_map.get(a.asset_type, a.asset_type.value),
+                status=a.status.value,
+            )
+            for a in result.scalars().all()
+        ]

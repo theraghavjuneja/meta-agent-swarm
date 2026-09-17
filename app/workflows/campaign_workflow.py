@@ -39,7 +39,6 @@ from uuid import UUID
 from temporalio import workflow
 from temporalio.exceptions import ActivityError
 
-
 with workflow.unsafe.imports_passed_through():
     from app.assets.activities import compose_ad, generate_hero_image, render_video
     from app.assets.dto import (
@@ -49,12 +48,14 @@ with workflow.unsafe.imports_passed_through():
         GenerateHeroImageOutput,
         RenderVideoInput,
         RenderVideoOutput,
+    )
+    from app.assets.dto import (
         UsageSummary as AssetUsageSummary,
     )
     from app.campaigns.activities import (
+        recompute_campaign_status,
         record_provider_usage,
         record_stage_event,
-        recompute_campaign_status,
         set_campaign_status,
     )
     from app.campaigns.dto import (
@@ -149,7 +150,7 @@ class CampaignWorkflow:
     # ------------------------------------------------------------------
 
     @workflow.run
-    async def run(self, input: CampaignWorkflowInput) -> None:  # noqa: A002
+    async def run(self, input: CampaignWorkflowInput) -> None:
         campaign_id = input.campaign_id
 
         # Read once at startup so replay is deterministic (settings are

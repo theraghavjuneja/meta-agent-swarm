@@ -26,4 +26,13 @@ class FixtureStorageAdapter:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
         logger.info("fixture_storage_saved", key=key, bytes=len(data))
-        return StoredAsset(storage_url=target.resolve().as_uri())
+        
+        from app.config import get_settings
+        api_base = getattr(get_settings(), "api_base_url", "http://localhost:8000").rstrip("/")
+        try:
+            rel_path = target.relative_to(_FIXTURE_STORAGE_DIR)
+            storage_url = f"{api_base}/fixtures/{rel_path}"
+        except ValueError:
+            storage_url = target.resolve().as_uri()
+            
+        return StoredAsset(storage_url=storage_url)
