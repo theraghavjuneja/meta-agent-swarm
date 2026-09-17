@@ -35,7 +35,9 @@ def get_image_adapter(settings=None, *, force_fail_once: bool = False) -> ImageG
     settings = settings or get_settings()
     if settings.provider_mode == "fixture":
         return FixtureImageGenerationAdapter(force_fail_once=force_fail_once)
-    return OpenAIImageGenerationAdapter()
+    return OpenAIImageGenerationAdapter(
+        api_token=settings.openai_api_key,
+    )
 
 
 def get_video_adapter(settings=None, *, force_fail_once: bool = False) -> VideoRenderPort:
