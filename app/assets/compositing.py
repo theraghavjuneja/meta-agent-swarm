@@ -97,9 +97,9 @@ def _composite(hero_image: bytes, target_size: tuple[int, int], spec: CreativeSp
     draw = ImageDraw.Draw(base)
     width, height = target_size
 
-    guidance = spec.composition_guidance or {}
-    hook_font_size = int(guidance.get("hook_font_size", width * 0.07))
-    cta_font_size = int(guidance.get("cta_font_size", width * 0.045))
+    # composition_guidance is a text string, not a dictionary.
+    hook_font_size = int(width * 0.07)
+    cta_font_size = int(width * 0.045)
     margin = int(width * 0.08)
 
     # Hook text near the top third.

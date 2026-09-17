@@ -103,7 +103,7 @@ async def _record_success(session, *, asset_id: UUID, attempt_started_at: dateti
         provider_request_id=provider_request_id,
         error=None,
         started_at=attempt_started_at,
-        completed_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
 
@@ -117,7 +117,7 @@ async def _record_failure(session, *, asset_id: UUID, attempt_started_at: dateti
         provider_request_id=None,
         error=error,
         started_at=attempt_started_at,
-        completed_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     await mark_failed(session, asset_id, error)
 
@@ -138,7 +138,7 @@ async def generate_hero_image(input: GenerateHeroImageInput) -> GenerateHeroImag
         )
         idempotency_key = derive_idempotency_key(input.campaign_id, AssetType.HERO_IMAGE)
         asset = await mark_generating(session, asset.id)
-        attempt_started_at = datetime.now(timezone.utc)
+        attempt_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         try:
             image_adapter = get_image_adapter()
@@ -210,7 +210,7 @@ async def compose_ad(input: ComposeAdInput) -> ComposeAdOutput:
             provider=provider,
         )
         asset = await mark_generating(session, asset.id)
-        attempt_started_at = datetime.now(timezone.utc)
+        attempt_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         try:
             hero_bytes = await _fetch_bytes(hero_asset.storage_url)
@@ -266,7 +266,7 @@ async def render_video(input: RenderVideoInput) -> RenderVideoOutput:
         )
         idempotency_key = derive_idempotency_key(input.campaign_id, AssetType.VIDEO)
         asset = await mark_generating(session, asset.id)
-        attempt_started_at = datetime.now(timezone.utc)
+        attempt_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         outline = spec.video_outline or {}
         render_spec = VideoRenderSpec(
