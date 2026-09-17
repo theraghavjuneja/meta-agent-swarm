@@ -3,3 +3,4 @@ db.md
 venv/
 .env
 docker/.env
+node_modules/
