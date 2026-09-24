@@ -1,34 +1,4 @@
-"""CampaignWorkflow — the top-level Temporal workflow for the campaign pipeline.
 
-Workflow ID convention: ``campaign-{campaign_id}``  (set by the caller — the
-api module's POST /campaigns handler — not by this file).
-
-Sequence
---------
-1. Research        run_research_agent              → up to 3 sourced angles
-2. Angle select    wait on ``select_angle`` signal → human picks one angle
-3. Spec            generate_creative_spec          → validated creative spec
-4. Hero image      generate_hero_image             → base image all assets derive from
-5. Concurrent      compose_ad (1×1 and 9×16) and render_video in parallel;
-                   per-task error isolation ensures one failure never cancels siblings
-6. Terminal        recompute_campaign_status       → derives true status from asset rows
-
-Design constraints (enforced structurally, not by convention)
--------------------------------------------------------------
-* No direct DB/HTTP/SDK calls anywhere in this file.  Every side-effect goes
-  through ``workflow.execute_activity`` so Temporal can replay safely.
-* ``select_angle`` is a ``@workflow.signal``; the main coroutine is blocked on
-  ``workflow.wait_condition`` until the signal arrives.  Generation cannot begin
-  without an explicit human selection — this is a structural guarantee, not a
-  comment.
-* ``asyncio.gather(..., return_exceptions=True)`` provides per-task isolation
-  for the three concurrent asset stages.  Each helper method catches
-  ``ActivityError`` internally and records failure without re-raising, so one
-  failing stage cannot cancel or fail the other two.
-* ``recompute_campaign_status`` is the *only* path to a terminal campaign
-  status.  This workflow never calls set_campaign_status("completed") directly.
-  The true state is always derived from the asset rows themselves.
-"""
 from __future__ import annotations
 
 import asyncio
