@@ -130,13 +130,61 @@ class CreativeSpecSchema(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    hook: str = Field(..., min_length=1)
-    approved_copy: str = Field(..., min_length=1)
-    cta: str = Field(..., min_length=1)
+    # Field descriptions are part of the JSON schema sent to the LLM, so the
+    # per-field guidance travels with the contract instead of living only in
+    # prose. The length caps exist because hook and cta are overlaid on a
+    # 1080 px-wide ad: a 20-word hook cannot be set legibly at ad sizes.
+    hook: str = Field(
+        ...,
+        min_length=1,
+        max_length=90,
+        description=(
+            "The on-image headline. One punchy line, ideally 3-8 words, at most "
+            "90 characters. No hashtags, no emoji."
+        ),
+    )
+    approved_copy: str = Field(
+        ...,
+        min_length=1,
+        description="Primary text for the ad post (shown beside the creative, not on it).",
+    )
+    cta: str = Field(
+        ...,
+        min_length=1,
+        max_length=40,
+        description=(
+            "Button label, 2-4 words, at most 40 characters, derived from the "
+            "brief's call to action."
+        ),
+    )
     product_identity: ProductIdentity
-    scene_description: str = Field(..., min_length=1)
-    palette: list[str] = Field(..., min_length=1, max_length=8)
-    composition_guidance: str = Field(..., min_length=1)
+    scene_description: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Art direction for ONE photorealistic product photograph: setting, "
+            "surface, props, lighting and mood, with the product as the single "
+            "focal point. Describe a single continuous scene -- never a collage, "
+            "grid, split screen or storyboard -- and never ask for any rendered "
+            "text, headline, logo, badge or icon in the image (copy is overlaid "
+            "later)."
+        ),
+    )
+    palette: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=8,
+        description="3-5 hex colours: backdrop, product/brand colour, and one saturated accent for the CTA button.",
+    )
+    composition_guidance: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Camera angle, framing and depth of field for a portrait frame. Keep "
+            "the product in the middle band with clean negative space above (for "
+            "the headline) and below (for the CTA button)."
+        ),
+    )
     video_outline: VideoOutline
 
     @field_validator("palette")
