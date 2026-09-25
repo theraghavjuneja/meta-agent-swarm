@@ -52,17 +52,49 @@ class FixtureImageGenerationAdapter:
     def __init__(self, force_fail_once: bool = False) -> None:
         self._pending_failure = force_fail_once
 
-    async def generate(self, prompt: str, idempotency_key: str, **params: Any) -> GeneratedImage:
+    async def generate(
+        self,
+        prompt: str,
+        idempotency_key: str,
+        *,
+        reference_image: bytes | None = None,
+        **params: Any,
+    ) -> GeneratedImage:
         if self._pending_failure:
             self._pending_failure = False
             logger.info("fixture_image_forced_failure", idempotency_key=idempotency_key)
             raise InfrastructureError("Fixture image adapter: forced failure before success")
 
         data = _ensure_fixture_image()
-        logger.info("fixture_image_generated", idempotency_key=idempotency_key, prompt=prompt)
+        if reference_image is not None:
+            # Make the reference visibly flow through in fixture mode, so the
+            # wiring (upload -> workflow -> activity -> port) is verifiable
+            # without a real provider call.
+            data = _with_reference_inset(data, reference_image)
+        logger.info(
+            "fixture_image_generated",
+            idempotency_key=idempotency_key,
+            prompt=prompt,
+            used_reference_image=reference_image is not None,
+        )
         return GeneratedImage(
             data=data,
             width=_FIXTURE_WIDTH,
             height=_FIXTURE_HEIGHT,
             provider_request_id=f"fixture-image-{idempotency_key}",
         )
+
+
+def _with_reference_inset(placeholder: bytes, reference_image: bytes) -> bytes:
+    """Placeholder hero with the reference packshot pasted in the middle."""
+    with Image.open(io.BytesIO(placeholder)) as base_src:
+        base = base_src.convert("RGB")
+    with Image.open(io.BytesIO(reference_image)) as ref_src:
+        ref = ref_src.convert("RGBA")
+    ref.thumbnail((_FIXTURE_WIDTH // 2, _FIXTURE_HEIGHT // 2))
+    offset = ((_FIXTURE_WIDTH - ref.width) // 2, (_FIXTURE_HEIGHT - ref.height) // 2)
+    base.paste(ref, offset, ref)
+    ImageDraw.Draw(base).text((40, _FIXTURE_HEIGHT - 60), "FIXTURE: REFERENCE IMAGE USED", fill=(255, 255, 255))
+    buf = io.BytesIO()
+    base.save(buf, format="JPEG", quality=90)
+    return buf.getvalue()

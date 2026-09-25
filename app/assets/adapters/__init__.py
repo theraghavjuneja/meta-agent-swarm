@@ -37,6 +37,10 @@ def get_image_adapter(settings=None, *, force_fail_once: bool = False) -> ImageG
         return FixtureImageGenerationAdapter(force_fail_once=force_fail_once)
     return OpenAIImageGenerationAdapter(
         api_token=settings.openai_api_key,
+        model=settings.openai_image_model,
+        size=settings.openai_image_size,
+        quality=settings.openai_image_quality,
+        input_fidelity=settings.openai_image_input_fidelity,
     )
 
 

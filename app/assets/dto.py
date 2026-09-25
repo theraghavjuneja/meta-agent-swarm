@@ -27,6 +27,9 @@ class UsageSummary:
 class GenerateHeroImageInput:
     campaign_id: UUID
     creative_spec_id: UUID
+    # The brief's uploaded/linked product packshot, if any. Sent to the image
+    # model as an image input, not just described in the prompt.
+    reference_image_url: str | None = None
 
 
 @dataclass(frozen=True)

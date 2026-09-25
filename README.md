@@ -60,7 +60,7 @@ data. All campaign, research, spec and asset data lives in the app's own Postgre
 app/
 ├── api/            FastAPI app, routers, Pydantic response schemas, Temporal client wiring
 ├── campaigns/       Campaign lifecycle: brief, status, stage events, usage ledger
-├── research/         The bounded ReAct research agent + its persistence
+├── research/         The research harness (plan → scoped search/read → verified findings → angles) + its persistence
 ├── creative/          LLM → structured creative-spec generation
 ├── assets/            Image generation, deterministic compositing, ffmpeg video, storage adapters
 ├── workflows/          Temporal workflow definitions + retry policies (the orchestration layer)
@@ -162,7 +162,7 @@ generation for a campaign, never updated. Unique on `(campaign_id, version)`.
 | `approved_copy` | text | LLM output — long-form ad body copy |
 | `cta` | text | LLM output |
 | `product_identity` | JSONB `{name, key_visual_traits[]}` | LLM output |
-| `scene_description` | text | LLM output — **this is the actual image-generation prompt** |
+| `scene_description` | text | LLM output — the scene part of the image prompt (wrapped by `app/assets/prompts.py`) |
 | `palette` | JSONB `list[str]` (hex colors, validated) | LLM output |
 | `composition_guidance` | text | LLM output |
 | `video_outline` | JSONB `{beats: [{label, description}]}` | LLM output |
@@ -308,48 +308,72 @@ This trips people up, so it's worth being explicit:
 
 | Stage | Who/what produces it | Consumes |
 |---|---|---|
-| **3 creative angles** | LLM, via a bounded ReAct loop (`app/research/loop.py`) with real `web_search`/`read_page` tool calls | Product brief |
+| **3 creative angles** | LLM, via the research harness (`app/research/loop.py`): a plan on fixed ad-useful lenses, real `web_search`/`read_page` tool calls behind deterministic scope gates (`source_policy.py`), per-page extraction of **verbatim-verified** quotes, then angles that cite finding ids | Product brief |
 | **Creative spec** (`hook`, `approved_copy`, `cta`, `product_identity`, `scene_description`, `palette`, `composition_guidance`, `video_outline`) | **One structured-output LLM call** (`app/creative/service.py`), grounded in the selected angle + brief, validated against `CreativeSpecSchema` (`extra="forbid"`) with up to 3 corrective retries on validation failure | Selected angle, brief |
-| **Hero image** | LLM image generation (OpenAI image API) | **Only** `scene_description` — see caveat below |
-| **1:1 and 9:16 ad images** | **Not separately generated.** Deterministic Pillow compositing (`app/assets/compositing.py`): center-crop-to-fill the hero image to the target aspect ratio, then draw `hook`/`cta` as wrapped, stroked text over a bottom scrim | Hero image bytes + `hook`/`cta` from the spec |
-| **Video** | **Not AI-generated at all.** Real `ffmpeg` subprocess (`app/assets/adapters/video_ffmpeg.py`): a Ken Burns pan/zoom over the hero image, a fading `drawtext` headline, then a solid-color CTA end-card, concatenated | Hero image bytes + `hook`/`cta`/target dims/duration |
+| **Hero image** | OpenAI image API. Text-to-image (`images.generate`) — or, when the brief has a reference packshot, `images.edit` with that packshot as the **image input** so the model reproduces the real product. Portrait `1024x1536`, `quality=high` (both configurable). | The full prompt from `app/assets/prompts.py`: product identity + `scene_description` + `composition_guidance` + `palette`, wrapped in a fixed house style and hard rules (see below) |
+| **1:1 and 9:16 ad images** | **Not separately generated.** Deterministic Pillow layout engine (`app/assets/compositing.py`): a product-saliency check, several candidate layouts inside Meta's safe zones scored for collision/busyness/contrast/size, post-render contrast validation, and a type system chosen by the spec (`editorial_serif` / `bold_athletic` / `modern_clean`). The image model never draws copy. A layout report is stored in the asset's `generation_prompt`. | Hero image bytes + `hook` + the **brief's CTA verbatim** + `palette`/`product_identity.name`/`typography_style` |
+| **Video** | **Not AI-generated.** `app/assets/adapters/video_ffmpeg.py`: Pillow renders every frame (hook push-in with headline reveal → product push-in → end card with CTA pop, crossfades), FFmpeg encodes H.264 High / BT.709 / 30 fps / `+faststart` with a silent AAC track | Hero bytes + the **same** 9:16 design layers the still uses (`render_video_layers`) + `VIDEO_*` settings |
 
 **Consistency strategy:** one generated hero image is the shared visual anchor;
-everything else (both ad crops and the video) is deterministically derived from
-those exact same bytes, which is what keeps product identity, palette, and treatment
-coherent across all four deliverables without three independent (and inconsistent)
-model calls.
+everything else (both ad formats and the video) is deterministically derived from
+those exact same bytes *and the same layout engine*, which keeps product identity,
+palette, typography and treatment coherent across all four deliverables without
+independent (and inconsistent) model calls.
 
-**Known gaps in the current wiring**, worth being upfront about rather than letting
-them look finished:
+**Why the hero prompt is so prescriptive.** Passing the LLM's `scene_description`
+through bare let the image model fill every gap with "ad-like" output — collages,
+split-screen storyboards and its own typography ("PRE-ORDER NOW", "100% vegan"
+badges). That text collided with the overlay and invented claims the brief never
+made. `app/assets/prompts.py` wraps the campaign material in fixed rules: one
+continuous photograph, **no rendered text/badges/logos** beyond the packaging's own
+label, product in the middle band of a portrait frame with calm negative space
+above (headline) and below (CTA). The creative-spec schema carries the same
+guidance in its field descriptions, and caps `hook` (90 chars) and `cta` (40).
 
-- `composition_guidance` and `palette` are generated, validated, persisted, and
-  returned by the API — but **never actually sent to the image model**. Only
-  `scene_description` is passed to `image_adapter.generate(...)`. If you want them
-  to actually shape the generated scene, concatenate them into the prompt string
-  before that call.
-- `approved_copy` isn't meant for the image pipeline at all — it's the long-form
-  marketing body copy, distinct from the short `hook`/`cta` that get overlaid.
-  Its correct home is the UI (shown alongside the asset previews), not baked into
-  any image.
-- `video_outline.beats` — a 2–6 beat narrative storyboard the LLM writes as part of
-  the spec — is **not used by the ffmpeg render at all**. `render_video` only reads
-  `width`/`height`/`duration_seconds` out of the outline dict; the `beats` array is
-  parsed, validated, persisted, and then never read again. `VideoRenderSpec` even
-  has an `extra: dict` field explicitly meant to carry outline data like this
-  through to the adapter, but it's never populated at the call site. The video that
-  actually renders is one static pan/zoom + two text overlays, not a multi-scene
-  sequence following the beats.
-- An uploaded/linked reference image (`reference_image_url` on the brief) is
-  validated, stored, and persisted on the `campaigns` row — but it is **not**
-  threaded into `CampaignWorkflowInput`, so it never reaches research, spec
-  generation, or hero-image generation, and it's not even echoed back in the
-  `CampaignDetail` API response. The image adapter also only calls a text-to-image
-  endpoint, with no code path that accepts a reference image at all. "Preserve
-  packshot identity," per the assignment, is accepted and stored, but not yet
-  implemented end-to-end.
+**Reference images.** `reference_image_url` travels brief → `CampaignWorkflowInput`
+→ `GenerateHeroImageInput` (and `RetryAssetWorkflowInput` for hero retries). The
+activity fetches the bytes, verifies they decode as an image, normalises to PNG
+(≤1536 px), and passes them to `ImageGenerationPort.generate(reference_image=...)`.
+The OpenAI adapter sends them to `images.edit` with `input_fidelity=high` (via
+`extra_body`, blank `OPENAI_IMAGE_INPUT_FIDELITY` omits it). In fixture mode the
+fixture adapter pastes the reference into the placeholder hero, so the wiring is
+visible without a provider call.
+
+**Remaining notes:**
+
+- `approved_copy` isn't meant for the image pipeline at all — it's the post's
+  primary text, distinct from the short `hook`/`cta` that get overlaid.
+- `video_outline.beats` is carried to the adapter in `VideoRenderSpec.extra`, but
+  the render follows a fixed hook → product → CTA structure rather than one scene
+  per beat (beats are prose storyboard notes, not display copy).
+- The reference image is used by the image model only; the spec LLM does not see
+  it (text-only port), so `product_identity` is still derived from the brief text.
 
 ---
+
+### 5.1 Research harness (`app/research/loop.py`)
+
+```
+plan ──► [ web_search(lens, query) ─gate─► screened results ─► read_page(lens, url) ─gate─► extract + verify quotes ]* ──► synthesise
+ │                   ▲ research-state summary after every step (budget, sources, uncovered lenses) │
+ └─ 3-5 questions on fixed lenses: audience_voice · purchase_drivers · objections · usage_moments · creative_landscape
+```
+
+| Gate (`source_policy.py`, deterministic) | Rejects |
+|---|---|
+| Lens | a search/read whose `lens` is not in the plan |
+| Query | background-knowledge queries (how it is made, history, definitions, composition, company/financial news) and queries mentioning none of the plan's anchor terms |
+| Results | general news, encyclopedias, social/video sites (also excluded provider-side), and off-topic titles/snippets |
+| Read | URLs not among kept search results, re-reads, more than `RESEARCH_MAX_READS_PER_DOMAIN` per site |
+| Evidence | findings whose quote is not found verbatim on the page; pages with no verified finding do not count as sources |
+
+Every decision above is a trace row (`research_steps`): the plan, each query with
+its kept and screened-out results (with reasons), each read with its verified and
+discarded findings, coverage checks, and the synthesis. Angles store their
+**sourced observations** (quote + URL) in `creative_angles.observations`, apart
+from the interpretive `audience_insight`/`hook`/`visual_direction`/`rationale`;
+the UI shows the two separately. The observations also feed the creative-spec
+prompt, so the scene and hook stay grounded in evidence.
 
 ## 6. External providers & fixture mode
 
@@ -460,7 +484,10 @@ Key groups: `provider_mode` / `environment`; `database_url`; `temporal_host` /
 / `local_storage_path` / `s3_*`; `research_max_tool_calls` /
 `research_max_iterations` / `research_timeout_seconds`; `max_reference_image_mb` /
 `allowed_reference_image_types`; target pixel dimensions for both image formats and
-the video, plus `video_min_duration_seconds` / `video_max_duration_seconds`.
+the video, plus `video_min_duration_seconds` / `video_max_duration_seconds`;
+hero-image generation: `openai_image_model` / `openai_image_size` (default
+`1024x1536`) / `openai_image_quality` (default `high`) /
+`openai_image_input_fidelity` (default `high`, blank to omit).
 
 
 
@@ -483,6 +510,20 @@ image and one bind-mounted source tree (`..:/code`) — `api` runs with
 `uvicorn --reload` for hot reload; `worker` has no such mechanism for a Temporal
 worker process, so a code change there needs `make restart-worker`.
 
+### Tests
+
+```
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest tests
+```
+
+Offline and provider-free. The ffmpeg render test is skipped when `ffmpeg` is not
+on `PATH`. `tests/test_workflow_reference_image.py` runs the real workflows on
+Temporal's time-skipping test server with mocked activities; the SDK downloads that
+server on first use, or set `TEMPORAL_TEST_SERVER_PATH` to a pre-downloaded
+`temporal-test-server` binary (from the `temporalio/sdk-java` GitHub releases). It
+skips if no server can be started.
+
 Two independent Postgres containers by design: the app's own tables, and
 Temporal's internal state — different lifecycles, different migration tools
 (Alembic vs. Temporal's own `auto-setup`), and mixing them is a foot-gun with no
@@ -497,15 +538,18 @@ upside.
 1. `research_runs.campaign_id`, `creative_specs.campaign_id`, and
    `assets.campaign_id` are unenforced UUID columns, not real foreign keys to
    `campaigns` — a migration debt from build ordering, not a design choice.
-2. `composition_guidance` and `palette` are generated but not sent to the image
-   model; `video_outline.beats` is generated but not consumed by the video
-   renderer. Both are inert today, not wired-and-broken.
-3. Reference/packshot image upload works (validated, stored) but the URL is never
-   propagated past `campaigns.reference_image_url` — it doesn't reach the image
-   generator, and the identity-preservation requirement from the brief is
-   currently unimplemented rather than partially implemented.
-4. The research loop's system prompt asks for "2–3" pages read, while the brief
-   asks for "at least 3" — currently a soft gap-note, not a hard minimum.
-5. Asset rows label the image-generation provider as `"replicate-flux"` even
+2. `video_outline.beats` reaches the video adapter but does not drive scene
+   count; the render is a fixed hook → product → CTA structure.
+3. Reference-image fidelity depends on the image model: `images.edit` receives
+   the packshot, but small label text can still drift. There is no automated
+   check that the generated product matches the reference.
+4. "At least 3 relevant sources" is enforced by sending the agent back (up to
+   twice) while budget remains; if the web genuinely has less, the run finishes
+   with a gap note rather than padding with irrelevant pages.
+5. The product-saliency check is a heuristic (colour distance + edges), not a
+   vision model. On busy scenes it marks more than the product, which makes
+   layouts conservative rather than wrong; the layout report's `collision` flag
+   shows when no candidate could avoid the product.
+6. Asset rows label the image-generation provider as `"replicate-flux"` even
    though the adapter underneath calls OpenAI — cosmetic, but worth fixing before
    relying on `provider_usage` for cost attribution.

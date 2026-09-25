@@ -55,7 +55,7 @@ from app.api.temporal_client import (
 from app.assets import repository as assets_repository
 from app.assets.adapters import get_storage_adapter
 from app.campaigns import service as campaigns_service
-from app.campaigns.models import CampaignStatus
+from app.campaigns.models import Campaign, CampaignStatus
 from app.common.exceptions import DomainError, InfrastructureError, ValidationError
 from app.common.logging import get_logger
 from app.config import get_settings
@@ -163,6 +163,7 @@ async def create_campaign(request: Request) -> CampaignCreatedResponse:
         tone=brief.tone,
         cta=brief.cta,
         extra_context=_verified_claims_context(brief.verified_claims),
+        reference_image_url=brief.reference_image_url,
     )
 
     try:
@@ -456,7 +457,7 @@ async def retry_asset(
     ``RetryAssetWorkflow``'s documented design, and the response's 202 means
     "this one asset is being regenerated", nothing more.
     """
-    await _require_campaign(campaign_id)
+    campaign = await _require_campaign(campaign_id)
 
     asset = await assets_repository.get_asset(session, asset_id)
     if asset.campaign_id != campaign_id:
@@ -494,6 +495,7 @@ async def retry_asset(
         asset_type=asset_type,
         creative_spec_id=asset.creative_spec_id,
         hero_asset_id=hero_asset_id,
+        reference_image_url=campaign.reference_image_url,
     )
 
     workflow_id, run_id = await start_retry_asset_workflow(
@@ -580,8 +582,8 @@ def _not_found(campaign_id: UUID) -> DomainError:
     )
 
 
-async def _require_campaign(campaign_id: UUID) -> None:
-    """404 early if the campaign does not exist.
+async def _require_campaign(campaign_id: UUID) -> Campaign:
+    """404 early if the campaign does not exist; return it otherwise.
 
     Called by every sub-resource handler so that ``/campaigns/{bad-id}/spec``
     reports the campaign as missing rather than reporting an absent spec for
@@ -590,6 +592,7 @@ async def _require_campaign(campaign_id: UUID) -> None:
     campaign = await campaigns_service.get_campaign(campaign_id)
     if campaign is None:
         raise _not_found(campaign_id)
+    return campaign
 
 
 def _verified_claims_context(claims: list[str]) -> str | None:
