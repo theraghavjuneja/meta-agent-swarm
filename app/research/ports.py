@@ -192,7 +192,16 @@ class LLMPort(Protocol):
 
 @runtime_checkable
 class WebSearchPort(Protocol):
-    async def search(self, query: str, max_results: int = 5) -> list[SearchResult]: ...
+    async def search(
+        self,
+        query: str,
+        max_results: int = 5,
+        *,
+        exclude_domains: Sequence[str] = (),
+    ) -> list[SearchResult]:
+        """``exclude_domains`` is a provider-side filter; the harness screens results
+        again itself, so adapters without such a filter may ignore it."""
+        ...
 
 
 @runtime_checkable

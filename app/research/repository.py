@@ -238,6 +238,7 @@ async def persist_angles(
                 hook=angle.hook,
                 visual_direction=angle.visual_direction,
                 rationale=angle.rationale,
+                observations=[o.model_dump(mode="json") for o in angle.observations],
                 is_selected=False,
             )
             session.add(row)

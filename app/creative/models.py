@@ -75,6 +75,12 @@ class CreativeSpec(Base, IdMixin):
     # {"beats": [{"label": str, "description": str}, ...]} — CreativeSpecSchema.video_outline
     video_outline: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
+    # "modern_clean" | "editorial_serif" | "bold_athletic" — picks the overlay type
+    # system and the hero prompt's art direction (app/assets/compositing.py, prompts.py).
+    typography_style: Mapped[str] = mapped_column(
+        sa.String(32), nullable=False, server_default="modern_clean"
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )

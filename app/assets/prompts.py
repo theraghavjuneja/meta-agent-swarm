@@ -38,17 +38,59 @@ if TYPE_CHECKING:
 __all__ = ["build_hero_image_prompt"]
 
 
+# LEGACY (pre style-specific art direction) -- one house style for every brand:
+# _HOUSE_STYLE = (
+#     "Style: premium commercial product photography for a paid social ad "
+#     "(Meta feed, Stories and Reels). Shot on a full-frame camera with a "
+#     "sharp prime lens, controlled studio-quality key light with soft fill "
+#     "and a subtle rim light that separates the product from the background. "
+#     "Clean, modern, editorial art direction; restrained props that support "
+#     "the product rather than compete with it; natural, true-to-life colors "
+#     "and materials; crisp focus on the product with gentle background "
+#     "depth of field. Photorealistic, not illustrated, not 3D-rendered-"
+#     "looking, no HDR halos, no oversaturation."
+# )
+
+# What the reference ads (premium fragrance, Hira) have in common, independent of
+# vertical: a deliberate colour story (one dominant hue + one accent), sculpted light,
+# tactile surfaces, props that tell the product's story, and calm space for type.
 _HOUSE_STYLE = (
-    "Style: premium commercial product photography for a paid social ad "
-    "(Meta feed, Stories and Reels). Shot on a full-frame camera with a "
-    "sharp prime lens, controlled studio-quality key light with soft fill "
-    "and a subtle rim light that separates the product from the background. "
-    "Clean, modern, editorial art direction; restrained props that support "
-    "the product rather than compete with it; natural, true-to-life colors "
-    "and materials; crisp focus on the product with gentle background "
-    "depth of field. Photorealistic, not illustrated, not 3D-rendered-"
-    "looking, no HDR halos, no oversaturation."
+    "Style: high-end commercial still-life photography for a paid social ad "
+    "(Meta feed, Stories and Reels), at the level of a premium brand's launch "
+    "campaign. Full-frame camera, sharp prime lens, shallow depth of field. "
+    "One deliberate colour story: a dominant hue with a single accent, graded "
+    "consistently across backdrop, surface and props. Tactile, premium surfaces "
+    "and materials. Props that tell the product's story -- only elements "
+    "suggested by the brief (flavours, ingredients, usage moment) -- arranged "
+    "with restraint so the product stays the hero. Photorealistic, not "
+    "illustrated, not 3D-rendered-looking, no HDR halos, no oversaturation."
 )
+
+# Art direction per overlay type system, so image and typography are designed
+# together rather than the type being dropped onto whatever the model produced.
+_STYLE_DIRECTION = {
+    "editorial_serif": (
+        "Art direction: luxury editorial still life. Low-key, sculpted light "
+        "with deep, controlled shadows and a warm rim light tracing the "
+        "product's edges; rich jewel tones with a metallic accent; surfaces such "
+        "as stone, velvet, glass or polished wood; a hint of atmosphere (soft "
+        "haze or bokeh). Quiet, confident, expensive."
+    ),
+    "bold_athletic": (
+        "Art direction: high-energy performance still life. Hard directional "
+        "key light with crisp shadows and strong contrast; a bold saturated "
+        "accent colour against a dark or neutral set; gritty real-world "
+        "surfaces (concrete, rubber gym flooring, brushed steel, chalk dust); "
+        "one dynamic element frozen mid-motion (splash, powder burst, water "
+        "droplets) that never covers the product label. Powerful, clean, modern."
+    ),
+    "modern_clean": (
+        "Art direction: bright, clean studio set. Soft daylight-quality key "
+        "light with gentle shadows; a seamless coloured backdrop in the "
+        "palette's lightest tone; one or two simple, relevant props or "
+        "furniture pieces; crisp, airy, contemporary."
+    ),
+}
 
 _FRAMING = (
     "Framing (portrait, 2:3): the product is the single, unmistakable focal "
@@ -104,8 +146,9 @@ def build_hero_image_prompt(spec: CreativeSpec, *, has_reference_image: bool = F
     """Return the full hero-image prompt for a creative spec.
 
     Campaign-specific material first (product, scene, composition, palette),
-    then the fixed house style, framing and hard rules, then -- only when
-    the user supplied one -- the reference-image fidelity instructions.
+    then the fixed house style, the art direction for the spec's typography
+    style, framing and hard rules, then -- only when the user supplied one --
+    the reference-image fidelity instructions.
     """
     parts = [
         "Create one photorealistic hero product photograph for a paid social ad campaign.",
@@ -120,7 +163,15 @@ def build_hero_image_prompt(spec: CreativeSpec, *, has_reference_image: bool = F
             f"palette -- {', '.join(spec.palette)} -- so the image reads as one "
             "cohesive, on-brand color story."
         )
-    parts += [_HOUSE_STYLE, _FRAMING, _HARD_RULES]
+    # LEGACY (pre style-specific art direction):
+    # parts += [_HOUSE_STYLE, _FRAMING, _HARD_RULES]
+    style = getattr(spec, "typography_style", None) or "modern_clean"
+    parts += [
+        _HOUSE_STYLE,
+        _STYLE_DIRECTION.get(style, _STYLE_DIRECTION["modern_clean"]),
+        _FRAMING,
+        _HARD_RULES,
+    ]
     if has_reference_image:
         parts.append(_REFERENCE_RULES)
     return "\n\n".join(parts)

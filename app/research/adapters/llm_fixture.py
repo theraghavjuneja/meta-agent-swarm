@@ -1,8 +1,9 @@
 """Fixture LLM adapter: a canned, deterministic script that exercises the whole loop.
 
-The script is: search → read page → read page → "I'm done" → structured three angles. That
-is enough to drive every branch of ``ResearchLoop`` end-to-end with no network access and
-no credentials.
+The script follows the harness in ``ResearchLoop``: a canned research plan, then
+search → read → read → read → "I'm done", with canned per-page findings (whose quotes
+really occur in the fixture pages, so they pass verification) and angles that cite those
+findings by id. That drives every phase end-to-end with no network and no credentials.
 
 Everything it returns is explicitly labelled ``[FIXTURE]`` so sample data can never be
 mistaken for live research in the UI, the database, or a demo.
@@ -14,6 +15,8 @@ of the adapter, callable from the running system, not a test double.
 
 from __future__ import annotations
 
+import copy
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -29,13 +32,13 @@ from app.research.ports import (
     ToolUseBlock,
 )
 
-__all__ = ["FIXTURE_ANGLES", "FixtureLLMAdapter"]
+__all__ = ["FIXTURE_ANGLES", "FIXTURE_PAGE_FINDINGS", "FIXTURE_PLAN", "FixtureLLMAdapter"]
 
 logger = get_logger(__name__)
 
 FIXTURE_SOURCE_A = "https://example.com/fixtures/sleep-research-overview"
-FIXTURE_SOURCE_B = "https://example.com/fixtures/consumer-wellness-trends"
-FIXTURE_SOURCE_C = "https://example.com/fixtures/evening-routine-forum"
+FIXTURE_SOURCE_B = "https://example.org/fixtures/consumer-wellness-trends"
+FIXTURE_SOURCE_C = "https://example.net/fixtures/evening-routine-forum"
 
 
 @dataclass(frozen=True)
@@ -52,7 +55,11 @@ _SCRIPT: tuple[_ScriptedTurn, ...] = (
             "complains about before I can pick an angle."
         ),
         tool_name="web_search",
-        tool_input={"query": "sleep quality complaints young professionals", "max_results": 3},
+        tool_input={
+            "lens": "audience_voice",
+            "query": "sleep quality complaints young professionals",
+            "max_results": 3,
+        },
     ),
     _ScriptedTurn(
         text=(
@@ -60,7 +67,7 @@ _SCRIPT: tuple[_ScriptedTurn, ...] = (
             "so I'll read it in full for a concrete audience insight."
         ),
         tool_name="read_page",
-        tool_input={"url": FIXTURE_SOURCE_A},
+        tool_input={"lens": "audience_voice", "url": FIXTURE_SOURCE_A},
     ),
     _ScriptedTurn(
         text=(
@@ -68,7 +75,7 @@ _SCRIPT: tuple[_ScriptedTurn, ...] = (
             "market-side view so at least one angle is grounded in category trends."
         ),
         tool_name="read_page",
-        tool_input={"url": FIXTURE_SOURCE_B},
+        tool_input={"lens": "objections", "url": FIXTURE_SOURCE_B},
     ),
     _ScriptedTurn(
         text=(
@@ -76,7 +83,7 @@ _SCRIPT: tuple[_ScriptedTurn, ...] = (
             "this audience talks about its own evenings, in its own words."
         ),
         tool_name="read_page",
-        tool_input={"url": FIXTURE_SOURCE_C},
+        tool_input={"lens": "usage_moments", "url": FIXTURE_SOURCE_C},
     ),
     _ScriptedTurn(
         text=(
@@ -85,6 +92,77 @@ _SCRIPT: tuple[_ScriptedTurn, ...] = (
         ),
     ),
 )
+
+
+FIXTURE_PLAN: dict[str, Any] = {
+    "category": "[FIXTURE] sleep ritual product",
+    "anchor_terms": ["sleep", "evening routine", "wellness", "switch off"],
+    "questions": [
+        {
+            "lens": "audience_voice",
+            "question": "[FIXTURE] How do young professionals describe bad nights in their own words?",
+            "why_it_matters": "[FIXTURE] The hook should use their phrasing, not ours.",
+        },
+        {
+            "lens": "objections",
+            "question": "[FIXTURE] What makes them distrust products in this category?",
+            "why_it_matters": "[FIXTURE] One angle can pre-empt the credibility objection.",
+        },
+        {
+            "lens": "usage_moments",
+            "question": "[FIXTURE] What does the hour before bed actually look like for them?",
+            "why_it_matters": "[FIXTURE] Gives the ad a concrete scene to show.",
+        },
+    ],
+}
+
+# Keyed by page URL. Every quote occurs verbatim in the matching fixture page, so the
+# harness's quote verification passes; the trends page's embedded injection is ignored.
+FIXTURE_PAGE_FINDINGS: dict[str, dict[str, Any]] = {
+    FIXTURE_SOURCE_A: {
+        "relevant": True,
+        "relevance_note": "[FIXTURE] First-hand survey language about sleeplessness.",
+        "findings": [
+            {
+                "lens": "audience_voice",
+                "observation": "[FIXTURE] Respondents frame the problem as not switching off, not tiredness.",
+                "quote": 'the recurring phrase is not "I\'m tired" but "I can\'t switch off"',
+            },
+            {
+                "lens": "usage_moments",
+                "observation": "[FIXTURE] Evening routines are the first thing dropped on a long day.",
+                "quote": "evening routines are abandoned first when the day overruns",
+            },
+        ],
+    },
+    FIXTURE_SOURCE_B: {
+        "relevant": True,
+        "relevance_note": (
+            "[FIXTURE] Category buyer scepticism; the page also contains an embedded "
+            "instruction, which was ignored."
+        ),
+        "findings": [
+            {
+                "lens": "objections",
+                "observation": "[FIXTURE] Shoppers look for what a product does not promise.",
+                "quote": "Shoppers report checking what a product explicitly does not promise",
+            },
+        ],
+    },
+    FIXTURE_SOURCE_C: {
+        "relevant": True,
+        "relevance_note": "[FIXTURE] Audience's own description of the pre-bed hour.",
+        "findings": [
+            {
+                "lens": "usage_moments",
+                "observation": "[FIXTURE] The hour before bed is felt as the only unclaimed time.",
+                "quote": "the hour before bed as the only part of the day nobody else has a claim on",
+            },
+        ],
+    },
+}
+
+_PAGE_URL_RE = re.compile(r'<source_content type="page" url="([^"]+)"')
 
 
 FIXTURE_ANGLES: dict[str, Any] = {
@@ -104,7 +182,7 @@ FIXTURE_ANGLES: dict[str, Any] = {
                 "[FIXTURE] Leads with the audience's own language about racing thoughts "
                 "rather than generic tiredness messaging."
             ),
-            "sources": [{"url": FIXTURE_SOURCE_A, "title": "[FIXTURE] Sleep research overview"}],
+            "finding_ids": ["F1", "F2"],
         },
         {
             "audience_insight": (
@@ -120,9 +198,7 @@ FIXTURE_ANGLES: dict[str, Any] = {
                 "[FIXTURE] Turns the category's credibility problem into the campaign's "
                 "differentiator by underclaiming on purpose."
             ),
-            "sources": [
-                {"url": FIXTURE_SOURCE_B, "title": "[FIXTURE] Consumer wellness trends"}
-            ],
+            "finding_ids": ["F3"],
         },
         {
             "audience_insight": (
@@ -138,10 +214,7 @@ FIXTURE_ANGLES: dict[str, Any] = {
                 "[FIXTURE] Positions the product as autonomy rather than sleep aid, which "
                 "both sources support."
             ),
-            "sources": [
-                {"url": FIXTURE_SOURCE_C, "title": "[FIXTURE] Community thread: evening routines"},
-                {"url": FIXTURE_SOURCE_A, "title": "[FIXTURE] Sleep research overview"},
-            ],
+            "finding_ids": ["F4", "F2"],
         },
     ],
     "gap_note": None,
@@ -175,6 +248,7 @@ FIXTURE_CREATIVE_SPEC: dict[str, Any] = {
             {"label": "[FIXTURE] CTA", "description": "[FIXTURE] Logo and CTA card on warm amber background."},
         ]
     },
+    "typography_style": "modern_clean",
 }
 
 
@@ -254,12 +328,27 @@ class FixtureLLMAdapter:
     ) -> StructuredOutput:
         self._structured_calls += 1
         self._maybe_fail("structured_output")
+        if schema_name == "research_plan":
+            return StructuredOutput(
+                data=copy.deepcopy(FIXTURE_PLAN),
+                usage=TokenUsage(input_tokens=400, output_tokens=220),
+            )
+        if schema_name == "page_findings":
+            url = _last_page_url(messages)
+            data = FIXTURE_PAGE_FINDINGS.get(url or "")
+            return StructuredOutput(
+                data=copy.deepcopy(data)
+                if data is not None
+                else {
+                    "relevant": False,
+                    "relevance_note": "[FIXTURE] No canned findings for this page.",
+                    "findings": [],
+                },
+                usage=TokenUsage(input_tokens=1200, output_tokens=160),
+            )
         if schema_name == "creative_angles":
             return StructuredOutput(
-                data={
-                    "angles": [dict(a) for a in FIXTURE_ANGLES["angles"]],
-                    "gap_note": FIXTURE_ANGLES["gap_note"],
-                },
+                data=copy.deepcopy(FIXTURE_ANGLES),
                 usage=TokenUsage(input_tokens=900, output_tokens=420),
             )
         if schema_name == "CreativeSpecSchema":
@@ -270,3 +359,12 @@ class FixtureLLMAdapter:
         raise NotImplementedError(
             f"[FIXTURE] No fixture data registered for schema_name={schema_name!r}."
         )
+
+
+def _last_page_url(messages: Sequence[LLMMessage]) -> str | None:
+    for message in reversed(messages):
+        for block in message.content if isinstance(message.content, list) else []:
+            match = _PAGE_URL_RE.search(getattr(block, "text", "") or "")
+            if match:
+                return match.group(1).replace("&quot;", '"')
+    return None
