@@ -28,6 +28,7 @@ from temporalio import activity
 from app.assets.adapters import (
     get_image_adapter,
     get_storage_adapter,
+    get_subject_locator,
     get_video_adapter,
 )
 from app.assets.compositing import compose_with_report, render_video_layers
@@ -80,6 +81,18 @@ _AD_DIMENSIONS = {
 
 def _storage_key(campaign_id: UUID, asset_type: AssetType, extension: str) -> str:
     return f"campaigns/{campaign_id}/{asset_type.value}.{extension}"
+
+
+async def _locate_subject(hero_bytes: bytes, spec) -> tuple[float, float, float, float] | None:
+    """Vision check before layout: where the product sits in the hero. A hint only
+    -- None (fixture mode, or any locator failure) leaves the compositor on its
+    pixel-based estimate."""
+    product = str((spec.product_identity or {}).get("name") or "")
+    try:
+        return await get_subject_locator().locate(hero_bytes, product=product)
+    except Exception as exc:  # noqa: BLE001 - layout hint, never fail the asset for it
+        logger.warning("subject_locator_unavailable", error=repr(exc)[:300])
+        return None
 
 
 async def _fetch_bytes(storage_url: str) -> bytes:
@@ -309,7 +322,10 @@ async def compose_ad(input: ComposeAdInput) -> ComposeAdOutput:
             # compose_fn = compose_1x1 if asset_type == AssetType.AD_1X1 else compose_9x16
             # composed_bytes = compose_fn(hero_bytes, spec)
             width, height = _AD_DIMENSIONS[asset_type]
-            composed_bytes, layout_report = compose_with_report(hero_bytes, spec, (width, height))
+            subject_hint = await _locate_subject(hero_bytes, spec)
+            composed_bytes, layout_report = compose_with_report(
+                hero_bytes, spec, (width, height), subject_hint=subject_hint
+            )
 
             storage_adapter = get_storage_adapter()
             key = _storage_key(input.campaign_id, asset_type, "jpg")
@@ -394,7 +410,9 @@ async def render_video(input: RenderVideoInput) -> RenderVideoOutput:
 
             # The same layout engine as the 9:16 still, so the video's type,
             # colours and CTA are identical to the approved image ads.
-            layers = render_video_layers(hero_bytes, spec, (width, height))
+            layers = render_video_layers(
+                hero_bytes, spec, (width, height), subject_hint=await _locate_subject(hero_bytes, spec)
+            )
             render_spec = VideoRenderSpec(
                 headline_text=spec.hook,
                 cta_text=spec.cta,

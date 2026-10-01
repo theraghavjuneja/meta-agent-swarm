@@ -130,6 +130,19 @@ class VideoRenderPort(Protocol):
         ...
 
 
+# (left, top, right, bottom) as fractions 0..1 of the image's width/height.
+SubjectBox = tuple[float, float, float, float]
+
+
+class SubjectLocatorPort(Protocol):
+    async def locate(self, image: bytes, *, product: str = "") -> SubjectBox | None:
+        """Where the advertised product sits in `image`, so the layout engine can
+        keep copy off it. None means "unknown": the compositor then falls back to
+        its own pixel-based saliency estimate. Must never raise for a bad image
+        or provider hiccup -- layout quality degrades, the asset does not fail."""
+        ...
+
+
 class StoragePort(Protocol):
     async def save(self, data: bytes, key: str, content_type: str) -> StoredAsset:
         """Persist `data` under `key` and return the resolved URL. Kept

@@ -92,10 +92,15 @@ _STYLE_DIRECTION = {
     ),
 }
 
+# LEGACY (first live run): "filling roughly 30-40% of the frame height" -- the
+# image model read that as ~45%, and a 2:3 hero cropped to 1:1 then leaves no
+# room for headline and CTA (the button landed on the label).
 _FRAMING = (
     "Framing (portrait, 2:3): the product is the single, unmistakable focal "
-    "point, centered horizontally, sitting in the middle band of the frame "
-    "and filling roughly 30-40% of the frame height. Keep the top quarter "
+    "point, centered horizontally, sitting in the middle band of the frame. "
+    "Shoot from far enough back that the product fills only about 30% of the "
+    "frame height -- never more than a third -- so it can also be cropped to "
+    "a square with room left above and below it. Keep the top quarter "
     "and the bottom fifth of the frame as calm, uncluttered, evenly lit "
     "background (seamless backdrop, wall, sky, surface or soft bokeh) with "
     "no objects in it -- that space is reserved for a headline and a "

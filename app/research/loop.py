@@ -66,6 +66,7 @@ from app.research.dto import (
     AngleSourceRef,
     CreativeAngleDTO,
     Lens,
+    ExtractedFinding,
     PageFindings,
     ResearchPlan,
     ResearchQuestion,
@@ -141,6 +142,9 @@ SOURCE_EXCERPT_CHARS = 800
 MAX_RESULTS_SHOWN = 6
 #: Times the harness sends the agent back when it stops with the plan under-covered.
 MAX_CONTINUE_NUDGES = 2
+# A read with less text than this is a bot wall or JS-only shell (Reddit returns its
+# bare title, 6 characters, to non-browser readers), not a page.
+MIN_READABLE_CHARS = 40
 
 
 # --------------------------------------------------------------------------------------
@@ -244,6 +248,8 @@ class _State:
     surfaced: dict[str, ScreenedResult] = field(default_factory=dict)  # normalised url -> result
     read: set[str] = field(default_factory=set)
     reads_per_domain: dict[str, int] = field(default_factory=dict)
+    # Sites whose pages come back (near-)empty to our reader, e.g. bot-blocking forums.
+    unreadable_domains: set[str] = field(default_factory=set)
     sources: dict[str, SourceRecord] = field(default_factory=dict)  # relevant pages only
     findings: list[_Finding] = field(default_factory=list)
     step_number: int = 0
@@ -647,6 +653,13 @@ class ResearchLoop:
             if key in state.read:
                 return error(step_type, "You already read that page.", "duplicate_read")
             domain = registrable_domain(args_page.url)
+            if domain in state.unreadable_domains:
+                return error(
+                    step_type,
+                    f"Pages on {domain} cannot be read by the page reader (they come back empty); "
+                    "pick a result from a different site.",
+                    "unreadable_domain",
+                )
             if state.reads_per_domain.get(domain, 0) >= self._max_reads_per_domain:
                 return error(
                     step_type,
@@ -658,6 +671,17 @@ class ResearchLoop:
             state.read.add(key)
             state.reads_per_domain[domain] = state.reads_per_domain.get(domain, 0) + 1
             page: PageContent = await self._with_deadline(self._page_reader.read(args_page.url))
+            if len(page.extracted_text.strip()) < MIN_READABLE_CHARS:
+                # Nothing to analyse (bot wall, JS-only page): don't spend the domain's
+                # read budget or an extraction call on it, and stop offering the site.
+                state.reads_per_domain[domain] -= 1
+                state.unreadable_domains.add(domain)
+                return self._finish_read(
+                    tool_use, args_page, page, None,
+                    f"the page returned only {len(page.extracted_text.strip())} characters of text; "
+                    f"{domain} is not readable, so its results will no longer be offered",
+                    state,
+                ), TokenUsage()
             extraction, usage, extraction_error = await self._extract(page, state)
             return self._finish_read(tool_use, args_page, page, extraction, extraction_error, state), usage
 
@@ -688,7 +712,10 @@ class ResearchLoop:
             blocked_types=self._blocked_types,
             extra_blocked_domains=self._extra_blocked,
         )
-        kept = [s for s in screened if s.kept][: min(args.max_results, MAX_RESULTS_SHOWN)]
+        kept = [
+            s for s in screened
+            if s.kept and registrable_domain(s.result.url) not in state.unreadable_domains
+        ][: min(args.max_results, MAX_RESULTS_SHOWN)]
         dropped = [s for s in screened if not s.kept]
         for s in kept:
             state.surfaced.setdefault(_normalise_url(s.result.url), s)
@@ -758,7 +785,7 @@ class ResearchLoop:
         except (InfrastructureError, asyncio.TimeoutError) as exc:
             return None, TokenUsage(), f"extraction failed: {exc!r}"
         try:
-            return PageFindings.model_validate(structured.data), structured.usage, None
+            return PageFindings.model_validate(_salvage_findings(structured.data)), structured.usage, None
         except ValidationError as exc:
             return None, structured.usage, f"extraction output invalid: {exc.errors(include_url=False)!r}"
 
@@ -1169,6 +1196,48 @@ def _normalise_url(url: str) -> str:
 
 
 _QUOTE_CHARS = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-", " ": " "})
+
+
+def _salvage_findings(data: Any) -> Any:
+    """Keep what is usable from an extraction payload instead of failing the page.
+
+    Over-long text is cut at a word boundary to the schema's limit -- a prefix of a
+    verbatim quote is still verbatim, so verification below is unaffected -- and a
+    finding that is still invalid is dropped on its own. Only a payload with no
+    usable shape at all fails the page.
+    """
+    if not isinstance(data, dict):
+        return data
+    out = dict(data)
+    note = out.get("relevance_note")
+    if isinstance(note, str):
+        out["relevance_note"] = _clip(note, 300) or "No note given."
+    findings = out.get("findings")
+    if isinstance(findings, list):
+        kept = []
+        for raw in findings:
+            if not isinstance(raw, dict):
+                continue
+            item = {k: raw.get(k) for k in ("lens", "observation", "quote")}
+            for key in ("observation", "quote"):
+                if isinstance(item[key], str):
+                    item[key] = _clip(item[key], 400)
+            try:
+                ExtractedFinding.model_validate(item)
+            except ValidationError:
+                continue
+            kept.append(item)
+        out["findings"] = kept[:4]
+    return out
+
+
+def _clip(text: str, limit: int) -> str:
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    space = cut.rfind(" ")
+    return (cut[:space] if space > limit // 2 else cut).rstrip()
 
 
 def _normalise_for_match(text: str) -> str:

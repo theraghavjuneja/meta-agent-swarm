@@ -75,19 +75,7 @@ class OpenAIImageGenerationAdapter:
 
         try:
             if reference_image is not None:
-                # input_fidelity goes through extra_body so this works on
-                # SDK versions that predate the typed parameter.
-                extra_body = (
-                    {"input_fidelity": self._input_fidelity} if self._input_fidelity else None
-                )
-                result = await self._client.images.edit(
-                    model=self._model,
-                    image=("reference.png", reference_image, "image/png"),
-                    prompt=prompt,
-                    size=size,
-                    quality=quality,
-                    extra_body=extra_body,
-                )
+                result = await self._edit(prompt, reference_image, size=size, quality=quality)
             else:
                 result = await self._client.images.generate(
                     model=self._model,
@@ -127,3 +115,45 @@ class OpenAIImageGenerationAdapter:
             height=height,
             provider_request_id=idempotency_key,
         )
+
+    async def _edit(self, prompt: str, reference_image: bytes, *, size: str, quality: str) -> Any:
+        """images.edit with the packshot as input.
+
+        ``input_fidelity`` goes through extra_body so this works on SDK versions
+        that predate the typed parameter. Not every image model accepts it
+        (gpt-image-2.5-flare rejects it with a 400 naming the parameter); a
+        configured fidelity is an optimisation, not a requirement, so on that
+        specific rejection the request is retried once without it and the
+        adapter stops sending it.
+        """
+        extra_body = {"input_fidelity": self._input_fidelity} if self._input_fidelity else None
+        try:
+            return await self._client.images.edit(
+                model=self._model,
+                image=("reference.png", reference_image, "image/png"),
+                prompt=prompt,
+                size=size,
+                quality=quality,
+                extra_body=extra_body,
+            )
+        except Exception as exc:
+            if not extra_body or not _rejects_param(exc, "input_fidelity"):
+                raise
+            logger.warning("openai_image_input_fidelity_unsupported", model=self._model)
+            self._input_fidelity = None
+            return await self._client.images.edit(
+                model=self._model,
+                image=("reference.png", reference_image, "image/png"),
+                prompt=prompt,
+                size=size,
+                quality=quality,
+            )
+
+
+def _rejects_param(exc: Exception, param: str) -> bool:
+    """True when the API answered 400 because of ``param`` specifically."""
+    body = getattr(exc, "body", None)
+    error = body.get("error", body) if isinstance(body, dict) else None
+    if isinstance(error, dict) and error.get("param") == param:
+        return True
+    return getattr(exc, "status_code", None) == 400 and param in str(exc)

@@ -455,7 +455,11 @@ _CROP_HEADROOM = 0.34
 _CROP_FOOTROOM = 0.20
 
 
-def _crop_box(image: Image.Image, target_size: tuple[int, int]) -> tuple[int, int, int, int]:
+def _crop_box(
+    image: Image.Image,
+    target_size: tuple[int, int],
+    subject: tuple[int, int, int, int] | None = None,
+) -> tuple[int, int, int, int]:
     """Crop window matching the target aspect ratio, placed around the product.
 
     Taller sources (a 2:3 hero going to 1:1) pick the vertical offset that keeps
@@ -467,7 +471,8 @@ def _crop_box(image: Image.Image, target_size: tuple[int, int]) -> tuple[int, in
     target_w, target_h = target_size
     target_ratio = target_w / target_h
     src_w, src_h = image.size
-    subject = _subject_box(image)
+    if subject is None:
+        subject = _subject_box(image)
 
     if src_w / src_h > target_ratio:
         new_w = int(src_h * target_ratio)
@@ -497,6 +502,43 @@ def _crop_to_fill(image: Image.Image, target_size: tuple[int, int]) -> Image.Ima
     """Crop to the target aspect ratio (subject-aware, see `_crop_box`),
     then resize to the exact target pixel dimensions -- never stretched."""
     return image.crop(_crop_box(image, target_size)).resize(target_size, Image.LANCZOS)
+
+
+SubjectHint = tuple[float, float, float, float]  # (l, t, r, b) as fractions of the hero
+
+
+def _frame_with_hint(
+    src: Image.Image, target_size: tuple[int, int], hint: SubjectHint
+) -> tuple[Image.Image, Image.Image, tuple[int, int, int, int]]:
+    """Reframe around a located product and build the collision mask from it.
+
+    The mask is the pixel saliency *inside* the product's box (its real
+    silhouette, so copy may still tuck beside a tapering lid), with the box itself
+    as the fallback when saliency finds little there. Everything outside the box
+    -- bokeh, props -- no longer counts as "the product", so it stops blocking
+    every layout.
+    """
+    src_w, src_h = src.size
+    box_src = (int(hint[0] * src_w), int(hint[1] * src_h), int(hint[2] * src_w), int(hint[3] * src_h))
+    crop = _crop_box(src, target_size, subject=box_src)
+    framed = src.crop(crop).resize(target_size, Image.LANCZOS)
+
+    tw, th = target_size
+    sx, sy = tw / (crop[2] - crop[0]), th / (crop[3] - crop[1])
+    pad = int(tw * 0.015)
+    box = (
+        max(0, int((box_src[0] - crop[0]) * sx) - pad),
+        max(0, int((box_src[1] - crop[1]) * sy) - pad),
+        min(tw, int((box_src[2] - crop[0]) * sx) + pad),
+        min(th, int((box_src[3] - crop[1]) * sy) + pad),
+    )
+    rect = Image.new("L", target_size, 0)
+    rect.paste(_MASK_ON, box)
+    inside = ImageChops.multiply(_subject_mask(framed), rect)
+    has_area = box[2] > box[0] and box[3] > box[1]
+    filled = ImageStat.Stat(inside.crop(box)).mean[0] / _MASK_ON if has_area else 0.0
+    mask = inside if filled >= 0.35 else rect
+    return framed, mask, box
 
 
 # --------------------------------------------------------------------------- #
@@ -622,6 +664,29 @@ def _fit_lines(
         size = max(size_min, int(size * 0.94))
 
 
+def _fit_eyebrow(
+    name: str, style: _TypeStyle, layout: _FormatLayout, max_width: int
+) -> tuple[str, ImageFont.FreeTypeFont, float]:
+    """The product-name eyebrow, fitted to the copy column -- never past the frame.
+
+    Spaced capitals run long ("BEASTLIFE PERFORMANCE PROTEIN (CHOCOLATE, 1 KG)" is
+    wider than the canvas), so: drop parenthetical variant detail (flavour, size),
+    then shrink down to 75%, then drop trailing words. It stays the product's own
+    name, just shorter."""
+    width = layout.size[0]
+    text = re.sub(r"\s*[(\[].*?[)\]]", "", name).strip().upper()
+    words = text.split()
+    base = int(width * layout.eyebrow_size)
+    for size in (base, int(base * 0.88), int(base * 0.75)):
+        font = _font(_UI_FONT, size)
+        tracking = font.size * style.eyebrow_tracking
+        if _tracked_width(font, text, tracking) <= max_width:
+            return text, font, tracking
+    while len(words) > 1 and _tracked_width(font, " ".join(words), tracking) > max_width:
+        words.pop()
+    return " ".join(words), font, tracking
+
+
 def _build_block(
     spec: CreativeSpec,
     style: _TypeStyle,
@@ -636,9 +701,9 @@ def _build_block(
     if style.headline_upper:
         main_text = main_text.upper()
 
-    eyebrow_text = str((spec.product_identity or {}).get("name") or "").strip().upper()
-    eyebrow_font = _font(_UI_FONT, int(width * layout.eyebrow_size))
-    eyebrow_tracking = eyebrow_font.size * style.eyebrow_tracking
+    eyebrow_text, eyebrow_font, eyebrow_tracking = _fit_eyebrow(
+        str((spec.product_identity or {}).get("name") or ""), style, layout, max_width
+    )
     eyebrow_h = int(eyebrow_font.size * 1.9) if eyebrow_text else 0
 
     kicker_lines: list[str] = []
@@ -805,6 +870,8 @@ class LayoutReport:
     scrim_alpha: int
     collision: bool
     candidates_considered: int
+    # "vision" when the subject box came from the vision locator, else "saliency".
+    subject_source: str = "saliency"
 
     def as_dict(self) -> dict:
         return {k: (list(v) if isinstance(v, tuple) else v) for k, v in self.__dict__.items()}
@@ -1094,16 +1161,25 @@ def _measured_contrast(
     return min(_contrast(ink, _region_stats(backdrop, r)[0]) for r in rects)
 
 
-def _design(hero_image: bytes, target_size: tuple[int, int], spec: CreativeSpec) -> _Design:
+def _design(
+    hero_image: bytes,
+    target_size: tuple[int, int],
+    spec: CreativeSpec,
+    subject_hint: SubjectHint | None = None,
+) -> _Design:
     layout = _layout_for(target_size)
     style = _style_for(spec)
-    with Image.open(io.BytesIO(hero_image)) as src:
-        framed = _crop_to_fill(src.convert("RGB"), target_size)
     palette = _palette(spec)
 
-    # 1. Vision check: where is the product in *this* image?
-    mask = _subject_mask(framed)
-    subject = _subject_box(framed)
+    # 1. Vision check: where is the product in *this* image? The vision locator's
+    #    box when the activity supplied one, else the pixel saliency estimate.
+    with Image.open(io.BytesIO(hero_image)) as src:
+        if subject_hint is not None:
+            framed, mask, subject = _frame_with_hint(src.convert("RGB"), target_size, subject_hint)
+        else:
+            framed = _crop_to_fill(src.convert("RGB"), target_size)
+            mask = _subject_mask(framed)
+            subject = _subject_box(framed)
 
     # 2. Candidate layouts, scored against the image; best one wins.
     candidates = _candidates(spec, style, layout, subject, mask)
@@ -1142,6 +1218,7 @@ def _design(hero_image: bytes, target_size: tuple[int, int], spec: CreativeSpec)
         scrim_alpha=alpha,
         collision=collision,
         candidates_considered=len(candidates),
+        subject_source="vision" if subject_hint is not None else "saliency",
     )
     return _Design(framed=framed, headline_layer=headline_layer, cta_layer=cta_layer, placement=best.placement, report=report)
 
@@ -1164,11 +1241,18 @@ def _to_png(image: Image.Image) -> bytes:
 
 
 def compose_with_report(
-    hero_image: bytes, spec: CreativeSpec, target_size: tuple[int, int]
+    hero_image: bytes,
+    spec: CreativeSpec,
+    target_size: tuple[int, int],
+    *,
+    subject_hint: SubjectHint | None = None,
 ) -> tuple[bytes, dict]:
     """Compose one ad and return it with the layout report (why the copy went
-    where it did), which the activity stores alongside the asset."""
-    design = _design(hero_image, target_size, spec)
+    where it did), which the activity stores alongside the asset.
+
+    `subject_hint` is the product's box in the hero (fractions), from the vision
+    locator; without it the compositor estimates the product from pixels."""
+    design = _design(hero_image, target_size, spec, subject_hint)
     canvas = design.framed.convert("RGBA")
     canvas.alpha_composite(design.headline_layer)
     canvas.alpha_composite(design.cta_layer)
@@ -1201,10 +1285,16 @@ class VideoLayers:
     cta_layer: bytes
 
 
-def render_video_layers(hero_image: bytes, spec: CreativeSpec, size: tuple[int, int]) -> VideoLayers:
+def render_video_layers(
+    hero_image: bytes,
+    spec: CreativeSpec,
+    size: tuple[int, int],
+    *,
+    subject_hint: SubjectHint | None = None,
+) -> VideoLayers:
     """The 9:16 ad design, split into the layers the video animates, so the
     video's typography is identical to the still ads'."""
-    design = _design(hero_image, size, spec)
+    design = _design(hero_image, size, spec, subject_hint)
     end_card = design.framed.convert("RGBA")
     end_card.alpha_composite(design.headline_layer)
     return VideoLayers(

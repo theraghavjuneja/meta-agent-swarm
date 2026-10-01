@@ -153,3 +153,61 @@ def test_spec_cta_is_the_brief_cta_verbatim(monkeypatch):
     )
     assert captured["cta"] == brief_cta
     assert captured["typography_style"] == "bold_athletic"
+
+
+# --------------------------------------------------------------------------------------
+# Vision locator hint (first live run: bokeh made saliency call 95% of the frame "product")
+# --------------------------------------------------------------------------------------
+
+
+def _bokeh_hero(size=(1024, 1536)) -> bytes:
+    """Dark set, a product in the middle and bright bokeh dots everywhere around it."""
+    from PIL import ImageDraw
+
+    w, h = size
+    image = Image.new("RGB", size, (14, 10, 8))
+    draw = ImageDraw.Draw(image)
+    for i in range(60):
+        x, y = (i * 137) % w, (i * 251) % h
+        draw.ellipse((x, y, x + 40, y + 40), fill=(245, 170, 90))
+    draw.rectangle((int(w * 0.36), int(h * 0.38), int(w * 0.64), int(h * 0.68)), fill=(30, 30, 32))
+    draw.rectangle((int(w * 0.36), int(h * 0.50), int(w * 0.64), int(h * 0.60)), fill=(230, 225, 210))
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def test_vision_hint_keeps_copy_off_the_product_on_a_bokeh_scene():
+    hero = _bokeh_hero()
+    hint = (0.36, 0.38, 0.64, 0.68)
+    for size in SIZES:
+        _, report = compose_with_report(hero, make_spec(typography_style="bold_athletic"), size, subject_hint=hint)
+        assert report["subject_source"] == "vision"
+        assert report["headline_overlap"] < 0.04, report
+        left, top, right, bottom = report["subject_box"]
+        assert right - left < size[0] * 0.5  # the box is the product, not the bokeh
+
+
+def test_without_hint_the_saliency_fallback_still_composes():
+    _, report = compose_with_report(_bokeh_hero(), make_spec(), (1080, 1080))
+    assert report["subject_source"] == "saliency"
+
+
+def test_long_product_name_eyebrow_never_leaves_the_frame():
+    spec = make_spec(typography_style="bold_athletic")
+    spec.product_identity = {"name": "Beastlife Performance Protein (Chocolate, 1 kg)", "key_visual_traits": ["tub"]}
+    layout = compositing._layout_for((1080, 1080))
+    style = compositing._STYLES["bold_athletic"]
+    max_w = int(1080 * (1 - 2 * layout.side_margin))
+    text, font, tracking = compositing._fit_eyebrow(spec.product_identity["name"], style, layout, max_w)
+    assert "(" not in text and text.startswith("BEASTLIFE")
+    assert compositing._tracked_width(font, text, tracking) <= max_w
+
+
+def test_locator_rejects_answers_that_cannot_be_a_product_box():
+    from app.assets.adapters.subject_locator_openai import _validated
+
+    assert _validated({"found": True, "left": 0.3, "top": 0.25, "right": 0.7, "bottom": 0.73}) == (0.3, 0.25, 0.7, 0.73)
+    assert _validated({"found": False, "left": 0.3, "top": 0.25, "right": 0.7, "bottom": 0.73}) is None
+    assert _validated({"found": True, "left": 0.0, "top": 0.0, "right": 1.0, "bottom": 1.0}) is None  # whole frame
+    assert _validated({"found": True, "left": 0.7, "top": 0.25, "right": 0.3, "bottom": 0.73}) is None  # inverted
