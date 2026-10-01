@@ -94,6 +94,16 @@ class Settings(BaseSettings):
             "omit the parameter for models that do not accept it."
         ),
     )
+    ad_text_mode: Literal["overlay", "model"] = Field(
+        default="overlay",
+        description=(
+            "Who renders the ad copy. 'overlay': the image model paints a text-free "
+            "hero and the compositor sets the headline and CTA on it (deterministic "
+            "spelling and placement). 'model': the image model designs one finished "
+            "1:1 master ad including all copy, and the other formats are derived from "
+            "that master by outpainting (see app/assets/formats.py)."
+        ),
+    )
     tavily_api_key: str | None = Field(
         default=None,
         description="Tavily API key, used by the web search / page reader provider adapter.",

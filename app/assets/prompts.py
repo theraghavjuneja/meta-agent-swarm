@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.creative.models import CreativeSpec
 
-__all__ = ["build_hero_image_prompt"]
+__all__ = ["OUTPAINT_PROMPT", "build_full_ad_prompt", "build_hero_image_prompt"]
 
 
 # LEGACY (pre style-specific art direction) -- one house style for every brand:
@@ -180,3 +180,112 @@ def build_hero_image_prompt(spec: CreativeSpec, *, has_reference_image: bool = F
     if has_reference_image:
         parts.append(_REFERENCE_RULES)
     return "\n\n".join(parts)
+
+
+# --------------------------------------------------------------------------- #
+# AD_TEXT_MODE=model: the image model designs the finished ad, copy included
+# --------------------------------------------------------------------------- #
+#
+# Same structure as the one-off prompt that produced the first model-designed
+# Beastlife ad (gold condensed headline, festive set, claim badge, CTA pill):
+# product fidelity first, then the scene, then an explicit text hierarchy with
+# every string quoted exactly, then layout rules (safe margins, label kept clear,
+# calm outer band so the 9:16 outpaint can extend it). The copy itself is never
+# the model's to write: headline = the spec's hook, CTA = the brief's CTA, badge =
+# one of the brief's verified claims -- all verbatim.
+
+_TYPE_DIRECTION = {
+    "bold_athletic": (
+        "very large, heavy condensed sans-serif capitals with a polished metallic "
+        "gradient finish (gold on a warm or festive palette, otherwise the palette's "
+        "brightest accent), crisp edges and a subtle drop shadow"
+    ),
+    "editorial_serif": (
+        "an elegant high-contrast serif in refined spaced capitals, in a soft metallic "
+        "or cream tone, understated and luxurious"
+    ),
+    "modern_clean": (
+        "a clean, bold geometric sans-serif in the palette's darkest or lightest tone "
+        "for maximum contrast, modern and confident"
+    ),
+}
+
+
+def _brand_line(spec: CreativeSpec) -> str:
+    """Product name without variant detail: "X (Chocolate, 1 kg)" -> "X"."""
+    import re
+
+    name = str((spec.product_identity or {}).get("name") or "").strip()
+    return re.sub(r"\s*[(\[].*?[)\]]", "", name).strip()
+
+
+def _cased(text: str, style: str) -> str:
+    return text.upper() if style in ("bold_athletic",) else text
+
+
+def build_full_ad_prompt(
+    spec: CreativeSpec, *, has_reference_image: bool = False, badge: str | None = None
+) -> str:
+    """Prompt for one finished, ready-to-publish 1:1 master ad (AD_TEXT_MODE=model)."""
+    style = getattr(spec, "typography_style", None) or "modern_clean"
+    headline = _cased(spec.hook.strip(), style)
+    cta = spec.cta.strip().upper() if style != "editorial_serif" else spec.cta.strip()
+    brand_line = _brand_line(spec)
+
+    texts = [f'- Headline, top-left, the largest text in the ad, in {_TYPE_DIRECTION.get(style, _TYPE_DIRECTION["modern_clean"])}: "{headline}"']
+    if brand_line:
+        texts.append(f'- Directly below the headline, much smaller, in a clean white or light sans-serif: "{brand_line}"')
+    texts.append(
+        f'- A single pill-shaped call-to-action button near the bottom-left, filled with the '
+        f'palette\'s strongest accent colour, label in high-contrast text: "{cta}"'
+    )
+    if badge:
+        texts.append(f'- One small round badge with a fine metallic border, placed beside the product: "{badge.strip()}"')
+
+    parts = [
+        "Design a finished, ready-to-publish square (1:1) social media ad for a paid "
+        "Meta / WhatsApp campaign, at the level of a top D2C brand's campaign key visual.",
+        _product_line(spec),
+    ]
+    if has_reference_image:
+        parts.append(
+            "The attached reference image is the exact product. Reproduce it faithfully as "
+            "the hero of the ad -- same container shape, lid, colours, label layout, logo and "
+            "label text -- large and sharp. Do not redesign, relabel or simplify it, and "
+            "ignore the reference image's own background."
+        )
+    parts.append(f"Scene and set: {spec.scene_description.strip()}")
+    if spec.composition_guidance:
+        parts.append(f"Composition: {spec.composition_guidance.strip()}")
+    if spec.palette:
+        parts.append(f"Colour story: build the set, lighting and typography around {', '.join(spec.palette)}.")
+    parts.append(
+        "Typography -- the ONLY text in the ad. Render exactly these strings, spelled "
+        "exactly, character for character, each once (this overrides any instruction "
+        "above to keep the image free of text):\n" + "\n".join(texts)
+    )
+    parts.append(
+        "Layout rules:\n"
+        "- Clear hierarchy: headline first, then the product, then the button.\n"
+        "- Keep every piece of text at least 7% of the width away from all four edges.\n"
+        "- Text never overlaps the product's label.\n"
+        "- Keep the outermost band of the image calm, continuous scenery (no text, no "
+        "cut-off objects) -- the ad will be extended into taller formats.\n"
+        "- One continuous design: no collage, grid, split screen, borders or frames.\n"
+        "- No other text, numbers, prices, discounts, offers, hashtags, watermarks or "
+        "claims anywhere. Do not add logos or brand names to props or the set; the only "
+        "lettering besides the strings above is what is printed on the product itself.\n"
+        "- No real or identifiable people."
+    )
+    return "\n\n".join(parts)
+
+
+OUTPAINT_PROMPT = (
+    "Extend this finished ad into a taller canvas. The transparent areas are new "
+    "space: fill them by continuing the existing scene seamlessly -- same set, "
+    "surfaces, lighting, colour grade, perspective and depth of field, with soft, "
+    "uncluttered background (bokeh, wall, floor, festive set dressing in keeping "
+    "with the scene). Add NO text, letters, numbers, logos, buttons, badges, "
+    "products, packaging or people in the new areas. Leave the existing ad exactly "
+    "as it is."
+)

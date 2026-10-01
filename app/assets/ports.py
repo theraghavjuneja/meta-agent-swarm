@@ -107,6 +107,7 @@ class ImageGenerationPort(Protocol):
         idempotency_key: str,
         *,
         reference_image: bytes | None = None,
+        mask: bytes | None = None,
         **params: Any,
     ) -> GeneratedImage:
         """Generate a hero image from `prompt`. `idempotency_key` is passed
@@ -116,7 +117,12 @@ class ImageGenerationPort(Protocol):
         `reference_image` is the user-supplied product packshot (PNG bytes),
         when there is one. Adapters must send it to the model as an image
         input -- not merely mention it in the prompt -- so the generated
-        scene reproduces the real product."""
+        scene reproduces the real product.
+
+        `mask` (PNG, same size as `reference_image`) turns the call into an
+        inpaint/outpaint edit: its transparent pixels are the region the model
+        may repaint. Used to extend a finished master ad into taller formats.
+        `params` may carry `size` to override the configured output size."""
         ...
 
 

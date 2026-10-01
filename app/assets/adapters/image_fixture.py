@@ -58,6 +58,7 @@ class FixtureImageGenerationAdapter:
         idempotency_key: str,
         *,
         reference_image: bytes | None = None,
+        mask: bytes | None = None,
         **params: Any,
     ) -> GeneratedImage:
         if self._pending_failure:
@@ -66,7 +67,11 @@ class FixtureImageGenerationAdapter:
             raise InfrastructureError("Fixture image adapter: forced failure before success")
 
         data = _ensure_fixture_image()
-        if reference_image is not None:
+        if mask is not None and reference_image is not None:
+            # Outpaint stand-in: the input canvas with its empty bands filled flat,
+            # at the input's size -- enough to exercise format derivation offline.
+            data = _flatten_canvas(reference_image)
+        elif reference_image is not None:
             # Make the reference visibly flow through in fixture mode, so the
             # wiring (upload -> workflow -> activity -> port) is verifiable
             # without a real provider call.
@@ -77,10 +82,12 @@ class FixtureImageGenerationAdapter:
             prompt=prompt,
             used_reference_image=reference_image is not None,
         )
+        with Image.open(io.BytesIO(data)) as produced:
+            width, height = produced.size
         return GeneratedImage(
             data=data,
-            width=_FIXTURE_WIDTH,
-            height=_FIXTURE_HEIGHT,
+            width=width,
+            height=height,
             provider_request_id=f"fixture-image-{idempotency_key}",
         )
 
@@ -97,4 +104,14 @@ def _with_reference_inset(placeholder: bytes, reference_image: bytes) -> bytes:
     ImageDraw.Draw(base).text((40, _FIXTURE_HEIGHT - 60), "FIXTURE: REFERENCE IMAGE USED", fill=(255, 255, 255))
     buf = io.BytesIO()
     base.save(buf, format="JPEG", quality=90)
+    return buf.getvalue()
+
+
+def _flatten_canvas(canvas_png: bytes) -> bytes:
+    with Image.open(io.BytesIO(canvas_png)) as img:
+        rgba = img.convert("RGBA")
+    flat = Image.new("RGB", rgba.size, (40, 44, 68))
+    flat.paste(rgba, (0, 0), rgba)
+    buf = io.BytesIO()
+    flat.save(buf, format="PNG")
     return buf.getvalue()
