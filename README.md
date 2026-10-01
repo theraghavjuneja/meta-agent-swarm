@@ -495,6 +495,8 @@ hero-image generation: `openai_image_model` / `openai_image_size` (default
 
 ## 10. Local development
 
+Step-by-step setup, running a campaign (UI and curl), switching `AD_TEXT_MODE`, debugging and resetting: see [`RUNNING.md`](RUNNING.md).
+
 ```
 docker/
 ├── docker-compose-local.yml     app Postgres, api (uvicorn --reload), worker,
