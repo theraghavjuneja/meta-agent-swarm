@@ -188,6 +188,54 @@ def test_vision_hint_keeps_copy_off_the_product_on_a_bokeh_scene():
         assert right - left < size[0] * 0.5  # the box is the product, not the bokeh
 
 
+def _camouflaged_lid_hero(size=(1024, 1536)) -> bytes:
+    """A tub whose lid is the backdrop colour -- ~0 pixel saliency there. Shaped
+    like the live run where the CTA pill sat on the lid (vision box ~0.24-0.63 x
+    0.36-0.70) and the old saliency mask reported no collision."""
+    from PIL import ImageDraw
+
+    w, h = size
+    image = Image.new("RGB", size, (200, 30, 40))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((int(w * 0.30), int(h * 0.48), int(w * 0.62), int(h * 0.66)), fill=(20, 20, 20))  # body
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+_LID_HINT = (0.30, 0.36, 0.62, 0.66)  # lid = top 40% of the box, same colour as the backdrop
+
+
+def _lid_band(size):
+    hero = Image.open(io.BytesIO(_camouflaged_lid_hero())).convert("RGB")
+    _, mask, (left, top, right, bottom) = compositing._frame_with_hint(hero, size, _LID_HINT)
+    return mask, (left, top, right, top + (bottom - top) * 2 // 5)
+
+
+def test_vision_box_is_off_limits_even_where_saliency_sees_nothing():
+    for size in SIZES:
+        mask, lid = _lid_band(size)
+        assert compositing._coverage(mask, [lid]) > 0.99  # the lid counts as product
+
+
+def test_copy_is_kept_off_a_camouflaged_lid(monkeypatch):
+    chosen = {}
+    render = compositing._render
+
+    def spy(framed, best, *args, **kwargs):
+        chosen["rects"] = best.text_rects()
+        return render(framed, best, *args, **kwargs)
+
+    monkeypatch.setattr(compositing, "_render", spy)
+    for size in SIZES:
+        _, report = compose_with_report(
+            _camouflaged_lid_hero(), make_spec(typography_style="bold_athletic"), size, subject_hint=_LID_HINT
+        )
+        _, (ll, lt, lr, lb) = _lid_band(size)
+        for left, top, right, bottom in chosen["rects"]:  # headline lines + CTA
+            assert right <= ll or left >= lr or bottom <= lt or top >= lb, (size, report)
+
+
 def test_without_hint_the_saliency_fallback_still_composes():
     _, report = compose_with_report(_bokeh_hero(), make_spec(), (1080, 1080))
     assert report["subject_source"] == "saliency"

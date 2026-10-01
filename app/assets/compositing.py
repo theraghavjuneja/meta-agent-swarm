@@ -512,11 +512,12 @@ def _frame_with_hint(
 ) -> tuple[Image.Image, Image.Image, tuple[int, int, int, int]]:
     """Reframe around a located product and build the collision mask from it.
 
-    The mask is the pixel saliency *inside* the product's box (its real
-    silhouette, so copy may still tuck beside a tapering lid), with the box itself
-    as the fallback when saliency finds little there. Everything outside the box
-    -- bokeh, props -- no longer counts as "the product", so it stops blocking
-    every layout.
+    The mask is the vision locator's whole box (padded): every pixel the model
+    says belongs to the product is off-limits for copy. Pixel saliency is not
+    used here -- a lid that matches its background scores ~0 saliency, which let
+    the CTA land on the tub lid in a live run (pill over 83% of the box, mask 0).
+    Everything outside the box -- bokeh, props -- does not count as "the product",
+    so it stops blocking every layout.
     """
     src_w, src_h = src.size
     box_src = (int(hint[0] * src_w), int(hint[1] * src_h), int(hint[2] * src_w), int(hint[3] * src_h))
@@ -534,10 +535,12 @@ def _frame_with_hint(
     )
     rect = Image.new("L", target_size, 0)
     rect.paste(_MASK_ON, box)
-    inside = ImageChops.multiply(_subject_mask(framed), rect)
-    has_area = box[2] > box[0] and box[3] > box[1]
-    filled = ImageStat.Stat(inside.crop(box)).mean[0] / _MASK_ON if has_area else 0.0
-    mask = inside if filled >= 0.35 else rect
+    # PREVIOUS MASK (saliency inside the box, box only as fallback) -- kept for revert:
+    # inside = ImageChops.multiply(_subject_mask(framed), rect)
+    # has_area = box[2] > box[0] and box[3] > box[1]
+    # filled = ImageStat.Stat(inside.crop(box)).mean[0] / _MASK_ON if has_area else 0.0
+    # mask = inside if filled >= 0.35 else rect
+    mask = rect
     return framed, mask, box
 
 
