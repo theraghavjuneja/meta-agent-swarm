@@ -15,16 +15,14 @@ export async function getCampaign(campaignId) {
 export async function createCampaign(payload) {
   const hasImage = payload.reference_image instanceof File;
 
+  const { reference_image, ...jsonPayload } = payload;
+
   if (hasImage) {
+    // The API takes the brief as one JSON `brief` part beside the file
+    // (app/api/routers/campaigns.py, _parse_create_request).
     const form = new FormData();
-    form.append('product_name', payload.product_name);
-    form.append('product_description', payload.product_description);
-    form.append('target_audience', payload.target_audience);
-    form.append('objective', payload.objective);
-    form.append('tone', payload.tone);
-    form.append('cta', payload.cta);
-    (payload.verified_claims || []).forEach((claim) => form.append('verified_claims', claim));
-    form.append('reference_image', payload.reference_image);
+    form.append('brief', JSON.stringify(jsonPayload));
+    form.append('reference_image', reference_image);
 
     const { data } = await apiClient.post('/campaigns', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -32,7 +30,6 @@ export async function createCampaign(payload) {
     return data;
   }
 
-  const { reference_image, ...jsonPayload } = payload;
   const { data } = await apiClient.post('/campaigns', jsonPayload);
   return data;
 }

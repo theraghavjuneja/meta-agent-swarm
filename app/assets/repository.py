@@ -132,12 +132,17 @@ async def mark_completed(
     width: int | None = None,
     height: int | None = None,
     duration_seconds: float | None = None,
+    generation_prompt: str | None = None,
 ) -> Asset:
     """Marks the row completed. Only ever called by the attempt that
     actually produced the verified result and finished writing it to
-    storage -- never optimistically."""
+    storage -- never optimistically. `generation_prompt`, when given,
+    replaces the pending row's placeholder with what was actually used
+    (e.g. the compositor's layout report)."""
     asset = await get_asset(session, asset_id)
     asset.status = AssetStatus.COMPLETED
+    if generation_prompt is not None:
+        asset.generation_prompt = generation_prompt
     asset.storage_url = storage_url
     asset.width = width
     asset.height = height

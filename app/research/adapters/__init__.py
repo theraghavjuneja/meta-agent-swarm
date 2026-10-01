@@ -87,7 +87,8 @@ def build_research_adapters(settings: Any | None = None) -> ResearchAdapters:
             model=str(getattr(settings, "openai_model", "") or "gpt-4o"),
         ),
         search=TavilySearchAdapter(
-            api_key=str(getattr(settings, "tavily_api_key", "") or "")
+            api_key=str(getattr(settings, "tavily_api_key", "") or ""),
+            search_depth=str(getattr(settings, "research_search_depth", "advanced")),
         ),
         page_reader=HttpPageReaderAdapter(),
         mock_mode=False,

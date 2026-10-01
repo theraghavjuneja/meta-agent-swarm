@@ -138,6 +138,9 @@ class AngleRead(BaseModel):
     rationale: str
     is_selected: bool
     sources: list[ResearchSourceRead]
+    # Sourced observations (verified quotes) -- as opposed to the interpretive
+    # audience_insight / hook / visual_direction / rationale above.
+    observations: list[dict[str, Any]] = Field(default_factory=list)
 
     @classmethod
     def from_model(cls, angle: Any) -> AngleRead:
@@ -150,6 +153,7 @@ class AngleRead(BaseModel):
             rationale=angle.rationale,
             is_selected=angle.is_selected,
             sources=[ResearchSourceRead.from_model(s) for s in angle.sources],
+            observations=list(getattr(angle, "observations", None) or []),
         )
 
 
@@ -248,6 +252,7 @@ class CreativeSpecResponse(BaseModel):
     palette: list[str]
     composition_guidance: str
     video_outline: dict[str, Any]
+    typography_style: str = "modern_clean"
     created_at: datetime
 
     @classmethod
@@ -266,6 +271,7 @@ class CreativeSpecResponse(BaseModel):
             palette=list(spec.palette or []),
             composition_guidance=spec.composition_guidance,
             video_outline=spec.video_outline or {},
+            typography_style=getattr(spec, "typography_style", None) or "modern_clean",
             created_at=spec.created_at,
         )
 

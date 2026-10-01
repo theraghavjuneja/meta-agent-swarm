@@ -19,9 +19,18 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
+    "AngleDraft",
+    "AngleDraftSet",
     "AngleSet",
     "AngleSourceRef",
     "CreativeAngleDTO",
+    "ExtractedFinding",
+    "Lens",
+    "PageFindings",
+    "ResearchPlan",
+    "ResearchQuestion",
+    "SourceType",
+    "SourcedObservation",
     "ResearchOutcome",
     "ResearchRequest",
     "ResearchStatus",
@@ -60,6 +69,61 @@ class StopReason(StrEnum):
     MAX_ITERATIONS = "max_iterations"
     TIMEOUT = "timeout"
     LLM_ERROR = "llm_error"
+
+
+class Lens(StrEnum):
+    """The only research directions the agent may pursue.
+
+    Deliberately industry-agnostic and deliberately *ad-useful*: each lens answers a
+    question a creative director needs before writing a hook. Background knowledge
+    ("how is X made", "history of X", ingredient chemistry, company news) maps to none of
+    them, which is the point -- a search has to declare its lens, so tangents have
+    nowhere to go.
+    """
+
+    AUDIENCE_VOICE = "audience_voice"
+    PURCHASE_DRIVERS = "purchase_drivers"
+    OBJECTIONS = "objections"
+    USAGE_MOMENTS = "usage_moments"
+    CREATIVE_LANDSCAPE = "creative_landscape"
+
+
+LENS_DESCRIPTIONS: dict[Lens, str] = {
+    Lens.AUDIENCE_VOICE: (
+        "How the target audience describes the need, frustration or desire in their own "
+        "words (forums, community threads, reviews, Q&A)."
+    ),
+    Lens.PURCHASE_DRIVERS: (
+        "What makes this audience choose one product in the category over another; what "
+        "they compare and value."
+    ),
+    Lens.OBJECTIONS: (
+        "Doubts, scepticism, complaints and reasons this audience hesitates or churns in "
+        "the category."
+    ),
+    Lens.USAGE_MOMENTS: (
+        "When, where and in what situations this audience uses products like this -- the "
+        "concrete moments an ad can depict."
+    ),
+    Lens.CREATIVE_LANDSCAPE: (
+        "How brands in the category currently advertise to this audience: recurring "
+        "tropes to avoid and gaps an ad could own."
+    ),
+}
+
+
+class SourceType(StrEnum):
+    """Coarse, domain-derived label for a source. See ``app.research.source_policy``."""
+
+    COMMUNITY = "community"
+    REVIEWS = "reviews"
+    INDUSTRY = "industry"
+    RESEARCH = "research"
+    RETAIL_OR_BRAND = "retail_or_brand"
+    EDITORIAL = "editorial"
+    NEWS = "news"
+    REFERENCE = "reference"
+    SOCIAL_VIDEO = "social_video"
 
 
 # --------------------------------------------------------------------------------------
@@ -101,6 +165,23 @@ class AngleSourceRef(BaseModel):
     title: str | None = Field(default=None, max_length=512)
 
 
+class SourcedObservation(BaseModel):
+    """A finding the harness verified: its quote occurs verbatim in a page it read.
+
+    This is the *observation* half of an angle. Everything else on the angle
+    (insight, hook, visual direction, rationale) is the model's *interpretation*.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    finding_id: str
+    lens: Lens
+    observation: str
+    quote: str
+    source_url: str
+    source_title: str
+
+
 class CreativeAngleDTO(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -124,6 +205,10 @@ class CreativeAngleDTO(BaseModel):
         min_length=1,
         description="The sources that support this angle. At least one is required.",
     )
+    observations: list[SourcedObservation] = Field(
+        default_factory=list,
+        description="Verified, quoted evidence behind the angle (filled by the harness).",
+    )
 
 
 class AngleSet(BaseModel):
@@ -142,6 +227,120 @@ class AngleSet(BaseModel):
             "Set when fewer than three well-sourced angles could be produced, "
             "explaining plainly what evidence was missing."
         ),
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Harness contracts: plan -> extract -> synthesise (all untrusted model output)
+# --------------------------------------------------------------------------------------
+
+
+class ResearchQuestion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lens: Lens
+    question: str = Field(
+        min_length=1,
+        max_length=300,
+        description="The concrete question to answer for THIS product and audience.",
+    )
+    why_it_matters: str = Field(
+        min_length=1,
+        max_length=300,
+        description="How the answer would change the ad (hook, scene, or proof).",
+    )
+
+
+class ResearchPlan(BaseModel):
+    """Output of the planning step; the frame every later step is checked against."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    category: str = Field(
+        min_length=1,
+        max_length=80,
+        description="The product category in 1-4 plain words, e.g. 'running shoes'.",
+    )
+    anchor_terms: list[str] = Field(
+        min_length=2,
+        max_length=12,
+        description=(
+            "Short words or phrases a relevant source must mention: the category, "
+            "synonyms buyers use, and the audience. Lowercase, 1-3 words each."
+        ),
+    )
+    questions: list[ResearchQuestion] = Field(
+        min_length=3,
+        max_length=5,
+        description="3-5 questions, each on a different lens, most important first.",
+    )
+
+
+class ExtractedFinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lens: Lens
+    observation: str = Field(
+        min_length=1,
+        max_length=400,
+        description="What the page shows, stated plainly. No creative spin.",
+    )
+    quote: str = Field(
+        min_length=8,
+        max_length=400,
+        description="A verbatim span copied exactly from the page that supports it.",
+    )
+
+
+class PageFindings(BaseModel):
+    """Output of the per-page extraction step."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    relevant: bool = Field(
+        description="True only if the page answers at least one planned question."
+    )
+    relevance_note: str = Field(
+        min_length=1,
+        max_length=300,
+        description="One sentence: why the page is or is not useful for the plan.",
+    )
+    findings: list[ExtractedFinding] = Field(default_factory=list, max_length=4)
+
+
+class AngleDraft(BaseModel):
+    """What the model writes for an angle; citations are finding ids, never URLs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    audience_insight: str = Field(min_length=1, description="The interpretation of the evidence.")
+    hook: str = Field(
+        min_length=1,
+        max_length=90,
+        description="One on-image headline, ideally 3-8 words.",
+    )
+    visual_direction: str = Field(
+        min_length=1,
+        description=(
+            "ONE photographable still scene for the ad: setting, light, props, mood, "
+            "with the product as the single focal point. No text in the image."
+        ),
+    )
+    rationale: str = Field(min_length=1, description="Why the cited findings lead here.")
+    finding_ids: list[str] = Field(
+        min_length=1,
+        max_length=6,
+        description="Ids of the verified findings (e.g. 'F3') this angle rests on.",
+    )
+
+
+class AngleDraftSet(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    angles: list[AngleDraft] = Field(default_factory=list, max_length=3)
+    gap_note: str | None = Field(
+        default=None,
+        description="Set when fewer than three well-evidenced angles are possible.",
     )
 
 

@@ -80,6 +80,9 @@ class CampaignWorkflowInput:
     tone: str
     cta: str
     extra_context: str | None = field(default=None)
+    # Optional product packshot from the brief. Defaulted so workflows
+    # started before this field existed still deserialise on replay.
+    reference_image_url: str | None = field(default=None)
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +246,7 @@ class CampaignWorkflow:
                 GenerateHeroImageInput(
                     campaign_id=campaign_id,
                     creative_spec_id=creative_spec_id,
+                    reference_image_url=input.reference_image_url,
                 ),
                 retry_policy=IMAGE_RETRY_POLICY,
                 start_to_close_timeout=IMAGE_START_TO_CLOSE,

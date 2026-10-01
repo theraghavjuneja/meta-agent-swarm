@@ -7,6 +7,8 @@ before the adapter starts succeeding.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from app.common.exceptions import InfrastructureError
 from app.common.logging import get_logger
 from app.research.ports import SearchResult
@@ -26,7 +28,7 @@ FIXTURE_RESULTS: list[SearchResult] = [
         score=0.94,
     ),
     SearchResult(
-        url="https://example.com/fixtures/consumer-wellness-trends",
+        url="https://example.org/fixtures/consumer-wellness-trends",
         title="[FIXTURE] Consumer wellness category trends",
         snippet=(
             "[FIXTURE] Category analysis: shoppers report scepticism toward clinical-"
@@ -35,7 +37,7 @@ FIXTURE_RESULTS: list[SearchResult] = [
         score=0.88,
     ),
     SearchResult(
-        url="https://example.com/fixtures/evening-routine-forum",
+        url="https://example.net/fixtures/evening-routine-forum",
         title="[FIXTURE] Community thread: what my evening routine actually looks like",
         snippet=(
             "[FIXTURE] Forum thread in which participants describe the evening as the only "
@@ -57,7 +59,13 @@ class FixtureSearchAdapter:
     def calls(self) -> int:
         return self._calls
 
-    async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+    async def search(
+        self,
+        query: str,
+        max_results: int = 5,
+        *,
+        exclude_domains: Sequence[str] = (),
+    ) -> list[SearchResult]:
         self._calls += 1
         if self._fail_budget > 0:
             self._fail_budget -= 1
