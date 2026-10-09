@@ -34,14 +34,6 @@ class Settings(BaseSettings):
         ),
     )
 
-    log_format: Literal["json", "console"] = Field(
-        default="console",
-        description=(
-            "Format passed to app.common.logging.configure_logging(): "
-            "'json' for structured production logs, 'console' for local dev."
-        ),
-    )
-
     database_url: str = Field(
         default="postgresql+asyncpg://postgres:postgres@localhost:5432/campaign_studio",
         description="Async Postgres DSN (SQLAlchemy 2.0 async driver, e.g. asyncpg).",
