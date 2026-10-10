@@ -87,7 +87,9 @@ class HttpPageReaderAdapter:
         truncated = len(extracted) > MAX_EXTRACTED_CHARS
         logger.info(
             "research.page_reader.read",
-            extra={"url": url, "chars": len(extracted), "truncated": truncated},
+            url=url,
+            chars=len(extracted),
+            truncated=truncated,
         )
         return PageContent(
             url=str(response.url) or url,
@@ -105,7 +107,8 @@ class HttpPageReaderAdapter:
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "research.page_reader.fetch_failed",
-                extra={"url": url, "error": repr(exc)},
+                url=url,
+                error=repr(exc),
             )
             raise InfrastructureError(f"Failed to fetch {url}: {exc}") from exc
 
@@ -134,13 +137,14 @@ def _extract_main_content(raw_html: str, url: str) -> str:
         )
         if extracted and extracted.strip():
             return extracted.strip()
-        logger.warning("research.page_reader.extraction_empty", extra={"url": url})
+        logger.warning("research.page_reader.extraction_empty", url=url)
     except ImportError:
-        logger.warning("research.page_reader.trafilatura_missing", extra={"url": url})
+        logger.warning("research.page_reader.trafilatura_missing", url=url)
     except Exception as exc:  # noqa: BLE001 - extraction must degrade, not fail
         logger.warning(
             "research.page_reader.extraction_failed",
-            extra={"url": url, "error": repr(exc)},
+            url=url,
+            error=repr(exc),
         )
     return _strip_tags(raw_html)
 

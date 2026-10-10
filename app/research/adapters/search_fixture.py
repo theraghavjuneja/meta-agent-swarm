@@ -63,7 +63,8 @@ class FixtureSearchAdapter:
             self._fail_budget -= 1
             logger.warning(
                 "research.fixture.forced_failure",
-                extra={"adapter": "search", "query": query},
+                adapter="search",
+                query=query,
             )
             raise InfrastructureError(
                 "[FIXTURE] Forced search failure (reproducible-failure mode)."

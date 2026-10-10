@@ -97,7 +97,8 @@ class FixturePageReaderAdapter:
             self._fail_budget -= 1
             logger.warning(
                 "research.fixture.forced_failure",
-                extra={"adapter": "page_reader", "url": url},
+                adapter="page_reader",
+                url=url,
             )
             raise InfrastructureError(
                 "[FIXTURE] Forced page-read failure (reproducible-failure mode)."

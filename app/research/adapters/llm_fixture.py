@@ -170,7 +170,8 @@ class FixtureLLMAdapter:
             self._fail_budget -= 1
             logger.warning(
                 "research.fixture.forced_failure",
-                extra={"adapter": "llm", "operation": operation},
+                adapter="llm",
+                operation=operation,
             )
             raise InfrastructureError(
                 f"[FIXTURE] Forced failure on {operation} (reproducible-failure mode)."
