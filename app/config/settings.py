@@ -1,13 +1,11 @@
-from __future__ import  annotations
+from __future__ import annotations
 
-from typing import  Literal
+from typing import Literal
 
+from pydantic import Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from pydantic import  Field, model_validator
-from pydantic_settings import  BaseSettings, SettingsConfigDict
-
-
-from app.common.exceptions import  ValidationError
+from app.common.exceptions import ValidationError
 
 
 class Settings(BaseSettings):
@@ -172,7 +170,7 @@ class Settings(BaseSettings):
     )
 
     @model_validator(mode="after")
-    def _validate_cross_field_rules(self) -> "Settings":
+    def _validate_cross_field_rules(self) -> Settings:
         errors: list[str] = []
 
         if self.provider_mode == "real":

@@ -5,7 +5,7 @@ import asyncio
 import functools
 import random
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import ParamSpec, TypeVar
 
 from app.common.exceptions import InfrastructureError

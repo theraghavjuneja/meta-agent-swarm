@@ -1,14 +1,11 @@
-from __future__ import  annotations
+from __future__ import annotations
 
-import  uuid
-
-from datetime import  datetime
+import uuid
+from datetime import datetime
 
 from sqlalchemy import MetaData
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
-
-
 
 # Naming convention for constraints/indexes so Alembic autogenerate produces
 # stable, predictable names (e.g. "ix_campaigns_status") instead of

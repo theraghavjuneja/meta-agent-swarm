@@ -71,7 +71,7 @@ class InfrastructureError(AppError):
         operation: str,
         message: str | None = None,
         code: str = "infrastructure_error",
-    ) -> "InfrastructureError":
+    ) -> InfrastructureError:
         """
         Build an infrastructure error from a raised exception
         """
@@ -112,7 +112,7 @@ class ValidationError(AppError):
         *,
         message: str = "Validation failed",
         code: str = "validation_error",
-    ) -> "ValidationError":
+    ) -> ValidationError:
         fields: dict[str, list[str]] = {}
         for err in errors:
             loc = err.get("loc", ())

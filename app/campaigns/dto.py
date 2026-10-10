@@ -25,8 +25,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.common.exceptions import ValidationError
 from app.campaigns.models import CampaignStatus, StageEventType, StageName
+from app.common.exceptions import ValidationError
+
 
 def _require_nonempty(value: str, field_name: str, max_length: int | None = None) -> str:
     stripped = value.strip()

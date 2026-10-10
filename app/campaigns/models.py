@@ -29,11 +29,11 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, IdMixin, TimestampMixin
-
 
 # --------------------------------------------------------------------------
 # Enums - mirror the Postgres enum types byte-for-byte (values, not just
@@ -108,10 +108,10 @@ class Campaign(Base, IdMixin, TimestampMixin):
     )
     temporal_run_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    stage_events: Mapped[list["StageEvent"]] = relationship(
+    stage_events: Mapped[list[StageEvent]] = relationship(
         back_populates="campaign", cascade="all, delete-orphan"
     )
-    provider_usage: Mapped[list["ProviderUsage"]] = relationship(
+    provider_usage: Mapped[list[ProviderUsage]] = relationship(
         back_populates="campaign", cascade="all, delete-orphan"
     )
 
@@ -139,7 +139,7 @@ class StageEvent(Base, IdMixin):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    campaign: Mapped["Campaign"] = relationship(back_populates="stage_events")
+    campaign: Mapped[Campaign] = relationship(back_populates="stage_events")
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return (
@@ -171,7 +171,7 @@ class ProviderUsage(Base, IdMixin):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    campaign: Mapped["Campaign"] = relationship(back_populates="provider_usage")
+    campaign: Mapped[Campaign] = relationship(back_populates="provider_usage")
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return (
