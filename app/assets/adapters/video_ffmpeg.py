@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import tempfile
 from pathlib import Path
-from typing import Union
 
 from app.assets.ports import GeneratedVideo, VideoRenderSpec
 from app.common.exceptions import InfrastructureError
@@ -92,7 +91,7 @@ class FfmpegVideoRenderAdapter:
     """Real VideoRenderPort implementation shelling out to ffmpeg."""
 
     async def render(
-        self, hero_image: Union[bytes, Path], spec: VideoRenderSpec, idempotency_key: str
+        self, hero_image: bytes | Path, spec: VideoRenderSpec, idempotency_key: str
     ) -> GeneratedVideo:
         pan_zoom_duration = max(spec.target_duration_seconds - _CTA_HOLD_SECONDS, 1.0)
 

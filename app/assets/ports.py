@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, Protocol, Union
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
@@ -23,11 +23,11 @@ class GeneratedImage:
     temp path -- callers should use `read_bytes()` rather than poking at
     the fields directly."""
 
-    data: Optional[bytes] = None
-    path: Optional[Path] = None
+    data: bytes | None = None
+    path: Path | None = None
     width: int = 0
     height: int = 0
-    provider_request_id: Optional[str] = None
+    provider_request_id: str | None = None
 
     def read_bytes(self) -> bytes:
         if self.data is not None:
@@ -58,12 +58,12 @@ class GeneratedVideo:
     path -- callers should use `read_bytes()` rather than poking at the
     fields directly."""
 
-    data: Optional[bytes] = None
-    path: Optional[Path] = None
+    data: bytes | None = None
+    path: Path | None = None
     duration_seconds: float = 0.0
     width: int = 0
     height: int = 0
-    provider_request_id: Optional[str] = None
+    provider_request_id: str | None = None
 
     def read_bytes(self) -> bytes:
         if self.data is not None:
@@ -80,7 +80,7 @@ class StoredAsset:
     durable/public URLs (local filesystem, a public S3 base URL)."""
 
     storage_url: str
-    expires_at: Optional[datetime] = None
+    expires_at: datetime | None = None
 
 
 class ImageGenerationPort(Protocol):
@@ -93,7 +93,7 @@ class ImageGenerationPort(Protocol):
 
 class VideoRenderPort(Protocol):
     async def render(
-        self, hero_image: Union[bytes, Path], spec: VideoRenderSpec, idempotency_key: str
+        self, hero_image: bytes | Path, spec: VideoRenderSpec, idempotency_key: str
     ) -> GeneratedVideo:
         """Render a video animating `hero_image` per `spec` (pan/zoom,
         headline reveal, CTA end frame)."""

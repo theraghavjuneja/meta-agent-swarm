@@ -13,9 +13,9 @@ or a repeated page read cannot duplicate or corrupt the trace.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Iterable, Sequence
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -35,11 +35,11 @@ from app.research.models import (
 )
 
 __all__ = [
-    "create_research_run",
+    "DbStepRecorder",
     "complete_research_run",
+    "create_research_run",
     "fail_research_run",
     "persist_angles",
-    "DbStepRecorder",
 ]
 
 logger = get_logger(__name__)

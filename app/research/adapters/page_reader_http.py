@@ -104,7 +104,7 @@ class HttpPageReaderAdapter:
             return await self._fetch_with_retry(url)
         except InfrastructureError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.error(
                 "research.page_reader.fetch_failed",
                 url=url,

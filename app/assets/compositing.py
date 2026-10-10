@@ -19,7 +19,7 @@ _1X1_SIZE = (1080, 1080)
 _9X16_SIZE = (1080, 1920)
 
 
-def _crop_to_fill(image: "Image.Image", target_size: tuple[int, int]) -> "Image.Image":
+def _crop_to_fill(image: Image.Image, target_size: tuple[int, int]) -> Image.Image:
     """Center-crop-then-resize so the hero image exactly fills target_size
     without distortion: crop first to match the target aspect ratio, then
     resize to the exact target pixel dimensions."""
@@ -50,7 +50,7 @@ def _load_font(size: int):
 
 
 def _draw_wrapped_text(
-    draw: "ImageDraw.ImageDraw",
+    draw: ImageDraw.ImageDraw,
     text: str,
     *,
     center_x: int,
@@ -90,7 +90,7 @@ def _draw_wrapped_text(
     return y
 
 
-def _composite(hero_image: bytes, target_size: tuple[int, int], spec: "CreativeSpec") -> bytes:
+def _composite(hero_image: bytes, target_size: tuple[int, int], spec: CreativeSpec) -> bytes:
     with Image.open(io.BytesIO(hero_image)) as src:
         base = _crop_to_fill(src.convert("RGB"), target_size).convert("RGBA")
 
@@ -133,13 +133,13 @@ def _composite(hero_image: bytes, target_size: tuple[int, int], spec: "CreativeS
     return out.getvalue()
 
 
-def compose_1x1(hero_image: bytes, spec: "CreativeSpec") -> bytes:
+def compose_1x1(hero_image: bytes, spec: CreativeSpec) -> bytes:
     """Crop/recompose the hero image to exactly 1080x1080 and overlay
     hook/cta text per composition_guidance."""
     return _composite(hero_image, _1X1_SIZE, spec)
 
 
-def compose_9x16(hero_image: bytes, spec: "CreativeSpec") -> bytes:
+def compose_9x16(hero_image: bytes, spec: CreativeSpec) -> bytes:
     """Crop/recompose the hero image to exactly 1080x1920 and overlay
     hook/cta text per composition_guidance."""
     return _composite(hero_image, _9X16_SIZE, spec)

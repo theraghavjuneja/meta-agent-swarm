@@ -76,7 +76,7 @@ class TavilySearchAdapter:
             return await self._search_with_retry(**kwargs)
         except InfrastructureError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.error("research.tavily.call_failed", error=repr(exc))
             raise InfrastructureError(f"Tavily search failed: {exc}") from exc
 
