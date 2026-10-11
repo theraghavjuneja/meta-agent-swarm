@@ -17,7 +17,8 @@ failure surfaces as ``InfrastructureError``; a raw SDK exception never leaves th
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from app.common.exceptions import InfrastructureError
 from app.common.logging import get_logger
@@ -156,7 +157,7 @@ class AnthropicLLMAdapter:
             return await self._create_with_retry(**kwargs)
         except InfrastructureError:
             raise
-        except Exception as exc:  # noqa: BLE001 - SDK exceptions stop at this boundary
+        except Exception as exc:
             logger.error("research.anthropic.call_failed", error=repr(exc))
             raise InfrastructureError(f"Anthropic request failed: {exc}") from exc
 

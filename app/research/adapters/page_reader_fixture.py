@@ -13,7 +13,7 @@ from app.common.exceptions import InfrastructureError
 from app.common.logging import get_logger
 from app.research.ports import PageContent
 
-__all__ = ["FixturePageReaderAdapter", "FIXTURE_PAGES"]
+__all__ = ["FIXTURE_PAGES", "FixturePageReaderAdapter"]
 
 logger = get_logger(__name__)
 
@@ -97,7 +97,8 @@ class FixturePageReaderAdapter:
             self._fail_budget -= 1
             logger.warning(
                 "research.fixture.forced_failure",
-                extra={"adapter": "page_reader", "url": url},
+                adapter="page_reader",
+                url=url,
             )
             raise InfrastructureError(
                 "[FIXTURE] Forced page-read failure (reproducible-failure mode)."

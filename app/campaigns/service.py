@@ -11,11 +11,10 @@ from __future__ import annotations
 from decimal import Decimal
 from uuid import UUID
 
-from app.common.logging import get_logger
-
 from app.campaigns import repository
 from app.campaigns.dto import CampaignBrief, CampaignDetail, StageStatusInfo
 from app.campaigns.models import Campaign, CampaignStatus, StageEventType, StageName
+from app.common.logging import get_logger
 
 logger = get_logger(__name__)
 

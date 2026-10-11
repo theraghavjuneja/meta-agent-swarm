@@ -15,7 +15,6 @@ that Temporal's own RetryPolicy governs whole-activity retries.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 from uuid import UUID
@@ -23,7 +22,11 @@ from uuid import UUID
 import httpx
 from temporalio import activity
 
-from app.assets.adapters import get_image_adapter, get_storage_adapter, get_video_adapter
+from app.assets.adapters import (
+    get_image_adapter,
+    get_storage_adapter,
+    get_video_adapter,
+)
 from app.assets.compositing import compose_1x1, compose_9x16
 from app.assets.dto import (
     ComposeAdInput,
@@ -46,7 +49,6 @@ from app.assets.repository import (
     mark_generating,
     record_attempt,
 )
-
 from app.common.exceptions import InfrastructureError, ValidationError
 from app.common.logging import get_logger
 from app.common.retry import with_retry
@@ -92,7 +94,7 @@ async def _fetch_bytes(storage_url: str) -> bytes:
         return response.content
 
 
-async def _record_success(session, *, asset_id: UUID, attempt_started_at: datetime, provider_request_id: Optional[str]) -> None:
+async def _record_success(session, *, asset_id: UUID, attempt_started_at: datetime, provider_request_id: str | None) -> None:
     asset = await get_asset(session, asset_id)
     await record_attempt(
         session,

@@ -24,10 +24,10 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from collections.abc import Awaitable
-from typing import Any, Protocol, Sequence, TypeVar, runtime_checkable
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -58,14 +58,14 @@ from app.research.ports import (
 )
 
 __all__ = [
-    "StepRecorder",
-    "NullStepRecorder",
-    "LoopResult",
-    "ResearchLoop",
-    "TOOL_WEB_SEARCH",
-    "TOOL_READ_PAGE",
-    "build_tool_definitions",
     "SYSTEM_PROMPT",
+    "TOOL_READ_PAGE",
+    "TOOL_WEB_SEARCH",
+    "LoopResult",
+    "NullStepRecorder",
+    "ResearchLoop",
+    "StepRecorder",
+    "build_tool_definitions",
 ]
 
 logger = get_logger(__name__)
@@ -172,7 +172,7 @@ class StepRecorder(Protocol):
 class NullStepRecorder:
     """Recorder that drops everything — useful for running the loop without a database."""
 
-    async def record_step(self, step: ResearchStepRecord) -> None:  # noqa: D102
+    async def record_step(self, step: ResearchStepRecord) -> None:
         return None
 
 

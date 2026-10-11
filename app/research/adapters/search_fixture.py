@@ -11,7 +11,7 @@ from app.common.exceptions import InfrastructureError
 from app.common.logging import get_logger
 from app.research.ports import SearchResult
 
-__all__ = ["FixtureSearchAdapter", "FIXTURE_RESULTS"]
+__all__ = ["FIXTURE_RESULTS", "FixtureSearchAdapter"]
 
 logger = get_logger(__name__)
 
@@ -63,7 +63,8 @@ class FixtureSearchAdapter:
             self._fail_budget -= 1
             logger.warning(
                 "research.fixture.forced_failure",
-                extra={"adapter": "search", "query": query},
+                adapter="search",
+                query=query,
             )
             raise InfrastructureError(
                 "[FIXTURE] Forced search failure (reproducible-failure mode)."
