@@ -111,7 +111,7 @@ async def get_temporal_client() -> Client:
                 # not round-trip.
                 data_converter=pydantic_data_converter,
             )
-        except Exception as exc:  # noqa: BLE001 - deliberately broad, then wrapped
+        except Exception as exc:
             raise InfrastructureError.wrap(
                 exc,
                 provider="temporal",
@@ -147,7 +147,7 @@ async def close_temporal_client() -> None:
             result = close()
             if asyncio.iscoroutine(result):
                 await result
-        except Exception:  # noqa: BLE001 - shutdown must not raise
+        except Exception:
             logger.warning("temporal_client_close_failed", exc_info=True)
 
     _client = None
@@ -174,7 +174,7 @@ async def start_campaign_workflow(
             id=workflow_id,
             task_queue=settings.temporal_task_queue,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if _is_already_started(exc):
             raise DomainError(
                 f"A workflow is already running for campaign {campaign_id}",
@@ -224,7 +224,7 @@ async def signal_select_angle(campaign_id: UUID, angle_id: UUID) -> None:
         raise InfrastructureError.wrap(
             exc, provider="temporal", operation="signal_select_angle"
         ) from exc
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise InfrastructureError.wrap(
             exc, provider="temporal", operation="signal_select_angle"
         ) from exc
@@ -260,7 +260,7 @@ async def start_retry_asset_workflow(
             id=workflow_id,
             task_queue=settings.temporal_task_queue,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if _is_already_started(exc):
             raise DomainError(
                 f"A retry is already in flight for asset {retry_input.asset_id}",
