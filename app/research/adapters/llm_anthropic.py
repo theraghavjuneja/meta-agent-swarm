@@ -161,7 +161,7 @@ class AnthropicLLMAdapter:
             logger.error("research.anthropic.call_failed", error=repr(exc))
             raise InfrastructureError(f"Anthropic request failed: {exc}") from exc
 
-    @with_retry(max_attempts=3, retryable=_is_retryable)
+    @with_retry(max_attempts=3, is_retryable=_is_retryable)
     async def _create_with_retry(self, **kwargs: Any) -> Any:
         return await self._client.messages.create(**kwargs)
 

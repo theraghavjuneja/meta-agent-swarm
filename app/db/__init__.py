@@ -3,7 +3,7 @@ Persistence infrastructure: declartive base, mixins, engine, sessions
 No domain tables live here
 """
 
-from app.db.base import Base, CreatedAtMixin, IdMixin, TimeStampMixin
+from app.db.base import Base, CreatedAtMixin, IdMixin, TimestampMixin
 from app.db.session import engine, get_db_session, session_scope
 
 __all__=[

@@ -96,6 +96,33 @@ _MIME_EXTENSIONS = {
         "`multipart/form-data` with a `brief` part containing the same JSON "
         "and an optional `reference_image` file part."
     ),
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "schema": CampaignBrief.model_json_schema()
+                },
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "brief": {
+                                "type": "string",
+                                "description": "JSON string of CampaignBrief",
+                            },
+                            "reference_image": {
+                                "type": "string",
+                                "format": "binary",
+                                "description": "Optional reference image",
+                            },
+                        },
+                        "required": ["brief"],
+                    }
+                },
+            },
+            "required": True,
+        }
+    },
 )
 async def create_campaign(request: Request) -> CampaignCreatedResponse:
     """Validate the brief, store any reference image, create the row, start the workflow.

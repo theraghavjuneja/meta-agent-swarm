@@ -43,7 +43,7 @@ class IdMixin:
         default=uuid.uuid4,
     )
 
-class TimeStampMixin:
+class TimestampMixin:
     created_at:Mapped[datetime]=mapped_column(
         server_default=func.now(),
         nullable=False
