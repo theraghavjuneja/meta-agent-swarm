@@ -1,18 +1,10 @@
-# Campaign Studio — local Docker dev.
-#
-# Run everything from this directory:  cd docker && make local
-#
-# All targets assume they're invoked from here (make's default working
-# directory is the directory containing the Makefile), which is also where
-# docker-compose-local.yml and .env live - so no -f/--env-file flags are
-# needed anywhere below.
 
 COMPOSE := docker compose -f docker-compose-local.yml
 
 .PHONY: local local-d down stop logs logs-api logs-worker logs-temporal ps build \
         migrate makemigration downgrade current history psql clean
 
-## Bring up the full stack in the foreground (Ctrl-C stops it). Primary entrypoint.
+
 local:
 	$(COMPOSE) up --build
 
@@ -88,3 +80,10 @@ psql:
 ## Full teardown: stop everything AND delete volumes (app DB data + Temporal history/ES data). Destructive.
 clean:
 	$(COMPOSE) down -v
+## Restart the worker container (useful to pick up file changes)
+restart-worker:
+	$(COMPOSE) restart worker
+
+## Restart api and worker forcing recreation to pick up updated .env
+restart:
+	$(COMPOSE) up -d --force-recreate api worker
