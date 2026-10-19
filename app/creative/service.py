@@ -1,11 +1,10 @@
 """Creative spec generation: prompt -> LLM structured output -> validate -> persist.
 
 Corrective retry (schema validation failing and re-prompting with the error) is
-kept local to this module rather than routed through ``app.common.retry`` —
-``with_retry`` is for infra-level transport failures and already wraps the real
-LLM adapter's HTTP calls (Module 4). Validation-driven retries are a different
-kind of failure (content quality, not transport) and live here, bounded by
-``MAX_CORRECTIVE_ATTEMPTS``.
+kept local to this module. It is a different kind of failure from an infra-level
+transport error (content quality, not transport), so it is not something
+Temporal's activity-level RetryPolicy could sensibly handle; it lives here,
+bounded by ``MAX_CORRECTIVE_ATTEMPTS``.
 
 ASSUMED INTERFACES (Modules 1-4) — this file is written against the following
 shapes. They match what the Module 5 brief describes but weren't given verbatim,
@@ -36,10 +35,6 @@ call sites below if names differ:
           .usage: object with .provider, .prompt_tokens, .completion_tokens,
                   .total_tokens, .estimated_cost_usd, .is_estimated
                   (all optional/None where the provider doesn't report them)
-
-    app.common.retry.with_retry
-        Already applied inside the real LLMPort adapter for transport failures;
-        not called directly from this module.
 """
 
 from __future__ import annotations
@@ -173,8 +168,7 @@ async def generate_creative_spec(
     if validated is None:
         raise DomainError(
             "creative spec generation failed schema validation after "
-            f"{MAX_CORRECTIVE_ATTEMPTS} attempts",
-            details={"validation_error": str(last_error)},
+            f"{MAX_CORRECTIVE_ATTEMPTS} attempts. Last error: {str(last_error)}"
         )
 
     spec_row = await repository.create_version(
