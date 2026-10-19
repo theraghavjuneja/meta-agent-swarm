@@ -16,7 +16,6 @@ from pathlib import Path
 from app.assets.ports import GeneratedVideo, VideoRenderSpec
 from app.common.exceptions import InfrastructureError
 from app.common.logging import get_logger
-from app.common.retry import with_retry
 
 logger = get_logger(__name__)
 
@@ -106,20 +105,18 @@ class FfmpegVideoRenderAdapter:
             output_path = tmp_dir / f"{idempotency_key}.mp4"
             command = _build_command(hero_path, output_path, spec, pan_zoom_duration)
 
-            async def _run_ffmpeg() -> None:
-                process = await asyncio.create_subprocess_exec(
-                    *command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await process.communicate()
+            if process.returncode != 0:
+                raise InfrastructureError(
+                    f"ffmpeg render failed (exit {process.returncode}): "
+                    f"{stderr.decode(errors='replace')[-2000:]}"
                 )
-                _, stderr = await process.communicate()
-                if process.returncode != 0:
-                    raise InfrastructureError(
-                        f"ffmpeg render failed (exit {process.returncode}): "
-                        f"{stderr.decode(errors='replace')[-2000:]}"
-                    )
 
-            await with_retry(_run_ffmpeg)
             data = output_path.read_bytes()
 
         logger.info("ffmpeg_video_rendered", idempotency_key=idempotency_key, duration=spec.target_duration_seconds)
