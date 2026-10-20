@@ -1,16 +1,16 @@
 """Temporal activities for app/assets.
 
 Each activity: resolves the asset row via `ensure_pending`, computes the
-idempotency key, calls `mark_generating`, calls the relevant port
-(wrapped in `app.common.retry.with_retry`), and on success writes the result
-via `StoragePort` then calls `mark_completed`. An `asset_generation_attempts`
-row is recorded either way. A row is only ever marked completed by the attempt
-that actually produced the verified result and finished writing it to storage
--- never optimistically.
+idempotency key, calls `mark_generating`, calls the relevant port directly,
+and on success writes the result via `StoragePort` then calls `mark_completed`.
+An `asset_generation_attempts` row is recorded either way. A row is only ever
+marked completed by the attempt that actually produced the verified result
+and finished writing it to storage -- never optimistically.
 
-`with_retry`'s own exhaustion surfaces as `InfrastructureError`, which these
-activities let propagate uncaught (after recording the failed attempt) so
-that Temporal's own RetryPolicy governs whole-activity retries.
+Ports raise `InfrastructureError` on provider failure, which these activities
+let propagate uncaught (after recording the failed attempt) so that Temporal's
+own RetryPolicy governs whole-activity retries. No app-level retry wrapper is
+used here -- retrying is Temporal's job.
 """
 from __future__ import annotations
 
@@ -51,7 +51,6 @@ from app.assets.repository import (
 )
 from app.common.exceptions import InfrastructureError, ValidationError
 from app.common.logging import get_logger
-from app.common.retry import with_retry
 from app.db import session_scope
 
 logger = get_logger(__name__)
@@ -104,7 +103,7 @@ async def _record_success(session, *, asset_id: UUID, attempt_started_at: dateti
         provider_request_id=provider_request_id,
         error=None,
         started_at=attempt_started_at,
-        completed_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
 
@@ -118,7 +117,7 @@ async def _record_failure(session, *, asset_id: UUID, attempt_started_at: dateti
         provider_request_id=None,
         error=error,
         started_at=attempt_started_at,
-        completed_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     await mark_failed(session, asset_id, error)
 
@@ -139,17 +138,17 @@ async def generate_hero_image(input: GenerateHeroImageInput) -> GenerateHeroImag
         )
         idempotency_key = derive_idempotency_key(input.campaign_id, AssetType.HERO_IMAGE)
         asset = await mark_generating(session, asset.id)
-        attempt_started_at = datetime.now(timezone.utc)
+        attempt_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         try:
             image_adapter = get_image_adapter()
-            generated = await with_retry(lambda: image_adapter.generate(spec.scene_description, idempotency_key))
+            generated = await image_adapter.generate(spec.scene_description, idempotency_key)
             image_bytes = generated.read_bytes()
 
             storage_adapter = get_storage_adapter()
             key = _storage_key(input.campaign_id, AssetType.HERO_IMAGE, "jpg")
-            stored = await with_retry(
-                lambda: storage_adapter.save(image_bytes, key, _STORAGE_CONTENT_TYPES[AssetType.HERO_IMAGE])
+            stored = await storage_adapter.save(
+                image_bytes, key, _STORAGE_CONTENT_TYPES[AssetType.HERO_IMAGE]
             )
 
             asset = await mark_completed(
@@ -211,7 +210,7 @@ async def compose_ad(input: ComposeAdInput) -> ComposeAdOutput:
             provider=provider,
         )
         asset = await mark_generating(session, asset.id)
-        attempt_started_at = datetime.now(timezone.utc)
+        attempt_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         try:
             hero_bytes = await _fetch_bytes(hero_asset.storage_url)
@@ -220,8 +219,8 @@ async def compose_ad(input: ComposeAdInput) -> ComposeAdOutput:
 
             storage_adapter = get_storage_adapter()
             key = _storage_key(input.campaign_id, asset_type, "jpg")
-            stored = await with_retry(
-                lambda: storage_adapter.save(composed_bytes, key, _STORAGE_CONTENT_TYPES[asset_type])
+            stored = await storage_adapter.save(
+                composed_bytes, key, _STORAGE_CONTENT_TYPES[asset_type]
             )
 
             width, height = _AD_DIMENSIONS[asset_type]
@@ -267,7 +266,7 @@ async def render_video(input: RenderVideoInput) -> RenderVideoOutput:
         )
         idempotency_key = derive_idempotency_key(input.campaign_id, AssetType.VIDEO)
         asset = await mark_generating(session, asset.id)
-        attempt_started_at = datetime.now(timezone.utc)
+        attempt_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         outline = spec.video_outline or {}
         render_spec = VideoRenderSpec(
@@ -282,13 +281,13 @@ async def render_video(input: RenderVideoInput) -> RenderVideoOutput:
             hero_bytes = await _fetch_bytes(hero_asset.storage_url)
 
             video_adapter = get_video_adapter()
-            generated = await with_retry(lambda: video_adapter.render(hero_bytes, render_spec, idempotency_key))
+            generated = await video_adapter.render(hero_bytes, render_spec, idempotency_key)
             video_bytes = generated.read_bytes()
 
             storage_adapter = get_storage_adapter()
             key = _storage_key(input.campaign_id, AssetType.VIDEO, "mp4")
-            stored = await with_retry(
-                lambda: storage_adapter.save(video_bytes, key, _STORAGE_CONTENT_TYPES[AssetType.VIDEO])
+            stored = await storage_adapter.save(
+                video_bytes, key, _STORAGE_CONTENT_TYPES[AssetType.VIDEO]
             )
 
             asset = await mark_completed(

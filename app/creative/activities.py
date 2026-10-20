@@ -5,10 +5,10 @@ ASSUMED INTERFACES (Modules 1-4), same caveat as service.py:
     app.db.session_scope() -> async context manager yielding an AsyncSession,
         committing on clean exit and rolling back on exception.
 
-Both DomainError (corrective retries exhausted) and InfrastructureError (provider
-failures that exhausted with_retry inside the adapter) are allowed to propagate
-uncaught — Temporal's RetryPolicy, configured later in the workflows module,
-decides what happens next. This activity does not catch either.
+Both DomainError (corrective retries exhausted) and InfrastructureError (a provider
+call inside the adapter failing outright) are allowed to propagate uncaught —
+Temporal's RetryPolicy, configured later in the workflows module, decides what
+happens next. This activity does not catch either.
 """
 
 from __future__ import annotations
