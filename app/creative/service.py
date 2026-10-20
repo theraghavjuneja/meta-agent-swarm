@@ -56,6 +56,7 @@ from app.creative.dto import (
 )
 from app.research import repository as research_repository
 from app.research.adapters import get_llm_port
+from app.research.ports import LLMMessage, TextBlock
 
 __all__ = ["MAX_CORRECTIVE_ATTEMPTS", "generate_creative_spec"]
 
@@ -146,10 +147,12 @@ async def generate_creative_spec(
     for attempt in range(1, MAX_CORRECTIVE_ATTEMPTS + 1):
         prompt = base_prompt if last_error is None else _corrective_prompt(base_prompt, last_error)
 
-        result = await llm.generate_structured(
+        result = await llm.structured_output(
             system=_SYSTEM_PROMPT,
-            prompt=prompt,
-            response_schema=CreativeSpecSchema,
+            messages=[LLMMessage(role="user", content=[TextBlock(text=prompt)])],
+            schema=CreativeSpecSchema.model_json_schema(),
+            schema_name="CreativeSpecSchema",
+            schema_description="A single creative spec version for a campaign.",
         )
         usage_raw = result.usage
 
@@ -188,13 +191,20 @@ async def generate_creative_spec(
         },
     )
 
+    input_tokens = getattr(usage_raw, "input_tokens", None)
+    output_tokens = getattr(usage_raw, "output_tokens", None)
+    total_tokens = (
+        input_tokens + output_tokens
+        if input_tokens is not None and output_tokens is not None
+        else None
+    )
     usage = UsageSummary(
-        provider=getattr(usage_raw, "provider", None) or settings.provider_mode,
-        prompt_tokens=getattr(usage_raw, "prompt_tokens", None),
-        completion_tokens=getattr(usage_raw, "completion_tokens", None),
-        total_tokens=getattr(usage_raw, "total_tokens", None),
-        estimated_cost_usd=getattr(usage_raw, "estimated_cost_usd", None),
-        is_estimated=bool(getattr(usage_raw, "is_estimated", False)),
+        provider=settings.provider_mode,
+        prompt_tokens=input_tokens,
+        completion_tokens=output_tokens,
+        total_tokens=total_tokens,
+        estimated_cost_usd=None,
+        is_estimated=True,
     )
 
     return GenerateSpecOutput(
