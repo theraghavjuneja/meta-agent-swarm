@@ -288,10 +288,5 @@ app.include_router(campaigns_router)
 
 @app.get("/health", tags=["ops"], summary="Liveness probe")
 async def health() -> dict[str, str]:
-    """Liveness only - deliberately does not touch Temporal or the database.
 
-    A readiness check that fans out to dependencies belongs on a separate
-    endpoint; conflating them makes a transient database blip look like a
-    dead process to an orchestrator.
-    """
     return {"status": "ok"}

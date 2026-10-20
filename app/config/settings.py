@@ -50,13 +50,13 @@ class Settings(BaseSettings):
         description="Temporal task queue the worker polls and workflows are started on.",
     )
 
-    anthropic_api_key: str | None = Field(
+    groq_api_key: str | None = Field(
         default=None,
-        description="Anthropic API key, used by the LLM provider adapter.",
+        description="Groq API key, used by the LLM provider adapter.",
     )
-    anthropic_model: str = Field(
-        default="claude-sonnet-5",
-        description="Default Anthropic model name for the LLM provider adapter.",
+    groq_model: str = Field(
+        default="openai/gpt-oss-120b",
+        description="Default Groq model name for the LLM provider adapter.",
     )
     tavily_api_key: str | None = Field(
         default=None,
@@ -175,7 +175,7 @@ class Settings(BaseSettings):
 
         if self.provider_mode == "real":
             required_provider_keys = {
-                "ANTHROPIC_API_KEY": self.anthropic_api_key,
+                "GROQ_API_KEY": self.groq_api_key,
                 "TAVILY_API_KEY": self.tavily_api_key,
                 "REPLICATE_API_TOKEN": self.replicate_api_token,
             }

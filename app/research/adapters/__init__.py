@@ -83,8 +83,8 @@ def build_research_adapters(settings: Any | None = None) -> ResearchAdapters:
 
     adapters = ResearchAdapters(
         llm=AnthropicLLMAdapter(
-            api_key=str(getattr(settings, "anthropic_api_key", "") or ""),
-            model=str(getattr(settings, "anthropic_model", "")),
+            api_key=str(getattr(settings, "groq_api_key", "") or ""),
+            model=str(getattr(settings, "groq_model", "")),
         ),
         search=TavilySearchAdapter(
             api_key=str(getattr(settings, "tavily_api_key", "") or "")
