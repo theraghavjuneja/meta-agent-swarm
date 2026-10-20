@@ -148,6 +148,36 @@ FIXTURE_ANGLES: dict[str, Any] = {
 }
 
 
+FIXTURE_CREATIVE_SPEC: dict[str, Any] = {
+    "hook": "[FIXTURE] Your body clocked out hours ago. Your head didn't.",
+    "approved_copy": (
+        "[FIXTURE] The twenty minutes before sleep, finally handled. No miracle claims — "
+        "just a short ritual that gives your mind somewhere to land."
+    ),
+    "cta": "[FIXTURE] Shop the ritual",
+    "product_identity": {
+        "name": "[FIXTURE] Product",
+        "key_visual_traits": ["[FIXTURE] matte finish", "[FIXTURE] warm amber accent"],
+    },
+    "scene_description": (
+        "[FIXTURE] A dark bedroom lit only by a phone screen, the product resting unlit "
+        "on the nightstand; cool blues resolving into warm amber."
+    ),
+    "palette": ["#0B1E3D", "#F5A623"],
+    "composition_guidance": (
+        "[FIXTURE] Close, low-angle shot; product in the lower third; negative space above "
+        "for hook copy."
+    ),
+    "video_outline": {
+        "beats": [
+            {"label": "[FIXTURE] Hook", "description": "[FIXTURE] Dark room, phone glow, restless energy."},
+            {"label": "[FIXTURE] Product", "description": "[FIXTURE] Product resting on nightstand, warm light rises."},
+            {"label": "[FIXTURE] CTA", "description": "[FIXTURE] Logo and CTA card on warm amber background."},
+        ]
+    },
+}
+
+
 class FixtureLLMAdapter:
     """Deterministic ``LLMPort`` implementation. No network, no credentials."""
 
@@ -224,10 +254,19 @@ class FixtureLLMAdapter:
     ) -> StructuredOutput:
         self._structured_calls += 1
         self._maybe_fail("structured_output")
-        return StructuredOutput(
-            data={
-                "angles": [dict(a) for a in FIXTURE_ANGLES["angles"]],
-                "gap_note": FIXTURE_ANGLES["gap_note"],
-            },
-            usage=TokenUsage(input_tokens=900, output_tokens=420),
+        if schema_name == "creative_angles":
+            return StructuredOutput(
+                data={
+                    "angles": [dict(a) for a in FIXTURE_ANGLES["angles"]],
+                    "gap_note": FIXTURE_ANGLES["gap_note"],
+                },
+                usage=TokenUsage(input_tokens=900, output_tokens=420),
+            )
+        if schema_name == "CreativeSpecSchema":
+            return StructuredOutput(
+                data=dict(FIXTURE_CREATIVE_SPEC),
+                usage=TokenUsage(input_tokens=700, output_tokens=260),
+            )
+        raise NotImplementedError(
+            f"[FIXTURE] No fixture data registered for schema_name={schema_name!r}."
         )

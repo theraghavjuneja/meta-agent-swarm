@@ -14,7 +14,6 @@ from botocore.config import Config as BotoConfig
 from app.assets.ports import StoredAsset
 from app.common.exceptions import InfrastructureError
 from app.common.logging import get_logger
-from app.common.retry import with_retry
 from app.config import get_settings
 
 logger = get_logger(__name__)
@@ -31,21 +30,20 @@ class S3CompatibleStorageAdapter:
 
         self._bucket = bucket
         self._public_base_url = getattr(settings, "s3_public_base_url", None)
-        # boto3's own retry machinery is disabled (max_attempts=0) so that
-        # app.common.retry.with_retry is the single source of retry policy
-        # for this adapter's provider calls, per the module's engineering
-        # principles.
+        # boto3's own retry machinery handles transient failures for this
+        # single call; Temporal's RetryPolicy on the calling activity governs
+        # retries for the activity as a whole. No app-level retry wrapper here.
         self._client = boto3.client(
             "s3",
             endpoint_url=getattr(settings, "s3_endpoint_url", None),
             region_name=getattr(settings, "s3_region", None),
             aws_access_key_id=getattr(settings, "s3_access_key_id", None),
             aws_secret_access_key=getattr(settings, "s3_secret_access_key", None),
-            config=BotoConfig(retries={"max_attempts": 0}),
+            config=BotoConfig(retries={"max_attempts": 3, "mode": "standard"}),
         )
 
     async def save(self, data: bytes, key: str, content_type: str) -> StoredAsset:
-        async def _put_object() -> None:
+        try:
             await asyncio.to_thread(
                 self._client.put_object,
                 Bucket=self._bucket,
@@ -53,12 +51,9 @@ class S3CompatibleStorageAdapter:
                 Body=data,
                 ContentType=content_type,
             )
-
-        try:
-            await with_retry(_put_object)
         except InfrastructureError:
             raise
-        except Exception as exc:  # defensive: normalize any boto3 error surfaced past with_retry
+        except Exception as exc:  # defensive: normalize any boto3 error surfaced from put_object
             raise InfrastructureError(f"S3 upload failed for key={key}: {exc}") from exc
 
         if self._public_base_url:

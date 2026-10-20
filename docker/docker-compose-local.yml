@@ -1,0 +1,182 @@
+# Campaign Studio — local development stack.
+#
+# Brings up: the API (uvicorn, --reload), a worker process (python -m
+# app.worker), a Postgres instance for the app's own tables, and — via
+# `include:` below — the full Temporal stack (Temporal server, its own
+# Postgres, Elasticsearch, the admin-tools CLI container, and the Web UI).
+#
+# `include:` requires Docker Compose CLI v2.20+ (`docker compose version`).
+# If you're on an older CLI, replace the `include:` block with an extra -f
+# flag instead, and drop the `campaign-studio-network` / `temporal-network`
+# split down to whatever the single merged file ends up needing:
+#
+#   docker compose -f docker-compose-local.yml \
+#                   -f temporal/docker-compose-temporal.yml up --build
+#
+# Run from this directory (docker/): `make local`. Compose auto-loads
+# `.env` from this same directory, both for the ${VARIABLE} interpolation
+# used below and as the container environment for every service that lists
+# `env_file: .env`.
+
+include:
+  - path: ./temporal/docker-compose-temporal.yml
+
+services:
+  # ---------------------------------------------------------------------
+  # App Postgres
+  #
+  # Kept separate from Temporal's own Postgres container (the one the
+  # included file brings up as `temporal-postgresql`), on purpose:
+  #
+  #  * Temporal's `auto-setup` image runs ITS OWN schema migrations against
+  #    whatever Postgres it's pointed at, unprompted, on every start. Two
+  #    independent migration tools (Alembic for our tables, Temporal's own
+  #    for its tables) racing against the same instance — let alone the
+  #    same database — is a foot-gun with zero upside in exchange.
+  #  * The two have unrelated lifecycles. Wiping the app DB with a fresh
+  #    `alembic downgrade base` + `upgrade head` while iterating on a
+  #    migration should never touch Temporal's workflow history, and
+  #    resetting Temporal's dev state should never touch app data.
+  #  * Temporal's container already ships hardcoded `temporal`/`temporal`
+  #    credentials and a `DB=postgres12` setting tuned for its own schema.
+  #    Repointing it at a shared instance would mean fighting those
+  #    defaults for a resource (one more container) this is genuinely not
+  #    short on.
+  #
+  # Two Postgres containers is the boring, low-risk default for local dev.
+  # ---------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: campaign-studio-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-campaign_studio}
+    ports:
+      # Host-side access for a local psql/GUI client. No collision with
+      # Temporal's Postgres — that container only `expose`s 5432 to its own
+      # network, it never publishes to the host.
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - campaign-studio-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-campaign_studio}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - campaign-studio-network
+
+  # ---------------------------------------------------------------------
+  # API — uvicorn with --reload
+  # ---------------------------------------------------------------------
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: campaign-studio-api
+    env_file:
+      - .env
+    environment:
+      # Overrides .env's values with the docker-network-aware hostnames —
+      # inside this network the app DB and Temporal are reachable by
+      # service name, never by localhost.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-campaign_studio}
+      TEMPORAL_HOST: temporal:7233
+    ports:
+      - "8000:8000"
+    volumes:
+      # The hard requirement: bind-mount the real source tree over the
+      # image's baked-in copy. `--reload` (in `command:` below) watches
+      # these files and restarts the app on change — no rebuild needed for
+      # any change under app/, alembic/, alembic.ini, or requirements.txt
+      # itself (a requirements.txt edit still needs `make local` to
+      # rebuild, since installed packages live inside the image, not on
+      # this mount).
+      - ..:/code
+    # --reload-dir scopes the watcher to app/ specifically. Without it,
+    # uvicorn watches the whole working directory, including
+    # docker-managed volumes it has no reason to poll.
+    command:
+      - uvicorn
+      - app.api.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /code/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    # The Temporal SDK client connects during FastAPI's lifespan startup
+    # and raises if it can't. On a cold `make local`, Temporal's own
+    # Postgres migrations can take a few seconds longer than "started", so
+    # the API may exit and restart once or twice before Temporal is truly
+    # ready. `on-failure` bounds that to a handful of attempts rather than
+    # a silent crash loop; if it's still failing after that, `make logs`
+    # and check the temporal container specifically.
+    restart: on-failure:5
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - campaign-studio-network
+      - temporal-network
+
+  # ---------------------------------------------------------------------
+  # Worker — python -m app.worker
+  #
+  # Separate container, same image. This is the process that actually
+  # executes activities (research, spec generation, image/video
+  # generation) — see app/worker.py's own docstring. Running it as its own
+  # container rather than a second command in the api container mirrors
+  # how these two run as genuinely separate processes in any real
+  # deployment, and means killing/restarting one to test crash-recovery
+  # doesn't take the HTTP API down with it.
+  # ---------------------------------------------------------------------
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: campaign-studio-worker
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-campaign_studio}
+      TEMPORAL_HOST: temporal:7233
+    volumes:
+      # Same bind mount as `api`, for the same reason: edit an activity,
+      # the worker picks it up. There is no --reload for a Temporal worker
+      # process, though, so a code change here needs the container
+      # restarted (`make restart-worker`) — it will not hot-reload the way
+      # uvicorn does.
+      - ..:/code
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    restart: on-failure:5
+    networks:
+      - campaign-studio-network
+      - temporal-network
+
+networks:
+  campaign-studio-network:
+    driver: bridge
+  # Not declared here: temporal-network is defined by the included file
+  # (./temporal/docker-compose-temporal.yml) and merged into this project
+  # automatically. Redeclaring it here would be redundant; referencing it
+  # by name in api/worker's `networks:` list above is enough for them to
+  # join it.
+
+volumes:
+  campaign-studio-pgdata:

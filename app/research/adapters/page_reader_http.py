@@ -26,7 +26,6 @@ from typing import Any, Final
 
 from app.common.exceptions import InfrastructureError
 from app.common.logging import get_logger
-from app.common.retry import with_retry
 from app.research.ports import PageContent
 
 __all__ = ["HttpPageReaderAdapter"]
@@ -42,21 +41,6 @@ _SCRIPT_STYLE_RE = re.compile(r"<(script|style|noscript)\b.*?</\1>", re.IGNORECA
 _TAG_RE = re.compile(r"<[^>]+>")
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 _WHITESPACE_RE = re.compile(r"\n{3,}")
-
-
-def _is_retryable(exc: BaseException) -> bool:
-    name = type(exc).__name__
-    if name in {
-        "ConnectError",
-        "ConnectTimeout",
-        "ReadTimeout",
-        "WriteTimeout",
-        "PoolTimeout",
-        "RemoteProtocolError",
-    }:
-        return True
-    status = getattr(getattr(exc, "response", None), "status_code", None)
-    return status is not None and (status == 429 or status >= 500)
 
 
 class HttpPageReaderAdapter:
@@ -101,7 +85,14 @@ class HttpPageReaderAdapter:
 
     async def _fetch(self, url: str) -> Any:
         try:
-            return await self._fetch_with_retry(url)
+            async with self._httpx.AsyncClient(
+                follow_redirects=True,
+                timeout=self._timeout,
+                headers={"User-Agent": USER_AGENT, "Accept": "text/html,*/*;q=0.8"},
+            ) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                return response
         except InfrastructureError:
             raise
         except Exception as exc:
@@ -111,17 +102,6 @@ class HttpPageReaderAdapter:
                 error=repr(exc),
             )
             raise InfrastructureError(f"Failed to fetch {url}: {exc}") from exc
-
-    @with_retry(max_attempts=3, retryable=_is_retryable)
-    async def _fetch_with_retry(self, url: str) -> Any:
-        async with self._httpx.AsyncClient(
-            follow_redirects=True,
-            timeout=self._timeout,
-            headers={"User-Agent": USER_AGENT, "Accept": "text/html,*/*;q=0.8"},
-        ) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            return response
 
 
 def _extract_main_content(raw_html: str, url: str) -> str:

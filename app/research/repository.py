@@ -39,6 +39,7 @@ __all__ = [
     "complete_research_run",
     "create_research_run",
     "fail_research_run",
+    "get_angle",
     "persist_angles",
 ]
 
@@ -193,6 +194,16 @@ class DbStepRecorder:
 # --------------------------------------------------------------------------------------
 # Angles
 # --------------------------------------------------------------------------------------
+
+
+async def get_angle(session: AsyncSession, angle_id: UUID) -> CreativeAngle | None:
+    """Fetch a single ``creative_angles`` row by id, or ``None`` if it doesn't exist.
+
+    Takes the caller's own session (rather than opening one via ``session_scope``)
+    since callers such as ``app.creative.service.generate_creative_spec`` already
+    hold an open session for the whole unit of work.
+    """
+    return await session.get(CreativeAngle, angle_id)
 
 
 async def persist_angles(
