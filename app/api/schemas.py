@@ -1,17 +1,3 @@
-"""Request/response models for the HTTP surface.
-
-The rule applied throughout: **reuse a domain package's DTO wherever it
-already fits.** ``CampaignBrief``, ``CampaignSummary`` and ``CampaignDetail``
-come straight from ``app.campaigns.dto`` and are re-exported here so routers
-import from one place. API-only shapes are defined here only where a response
-genuinely composes fields from more than one package - the assets response
-(``app.assets`` rows plus the owning ``creative_specs`` snapshot) and the
-research response (run + steps + sources + angles) being the two real cases.
-
-``from_attributes`` is not used. Every ``from_model`` classmethod maps the
-ORM row explicitly, so a column rename in a domain package fails loudly here
-rather than silently dropping a field from a response body.
-"""
 
 from __future__ import annotations
 
@@ -332,6 +318,20 @@ class AssetRead(BaseModel):
     @classmethod
     def from_model(cls, asset: Any, *, spec_snapshot: SpecSnapshotRef) -> AssetRead:
         status = _enum_value(asset.status)
+        
+        preview_url = asset.storage_url if status == "completed" else None
+        # Backwards compatibility: rewrite old file:/// URLs from the DB to HTTP
+        if preview_url and preview_url.startswith("file://"):
+            from app.config import get_settings
+            settings = get_settings()
+            api_base = getattr(settings, "api_base_url", "http://localhost:8000").rstrip("/")
+            if "/fixtures/storage/" in preview_url:
+                path_part = preview_url.split("/fixtures/storage/")[-1]
+                preview_url = f"{api_base}/fixtures/{path_part}"
+            elif "/assets/" in preview_url:
+                path_part = preview_url.split("/assets/")[-1]
+                preview_url = f"{api_base}/assets/{path_part}"
+
         return cls(
             id=asset.id,
             campaign_id=asset.campaign_id,
@@ -341,7 +341,7 @@ class AssetRead(BaseModel):
             # carry a stale storage_url from a previous successful attempt
             # while a retry is mid-flight; exposing that would show a client
             # an old asset labelled as the current one.
-            preview_url=asset.storage_url if status == "completed" else None,
+            preview_url=preview_url,
             width=asset.width,
             height=asset.height,
             duration_seconds=asset.duration_seconds,

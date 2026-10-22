@@ -1,29 +1,3 @@
-"""Temporal client wiring for the API process.
-
-One cached ``Client`` for the process lifetime, opened by the FastAPI
-lifespan and closed on shutdown. ``settings.temporal_host`` /
-``settings.temporal_namespace`` are read once here, never re-parsed per
-request.
-
-This module is also the single place that knows the workflow-id
-conventions::
-
-    CampaignWorkflow    -> campaign-{campaign_id}
-    RetryAssetWorkflow  -> retry-asset-{asset_id}-{attempt}
-
-Routers must never string-format those themselves; they call
-``campaign_workflow_id()`` / ``retry_asset_workflow_id()`` or, better, the
-``start_*`` / ``signal_*`` helpers below.
-
-Every Temporal SDK exception is wrapped before it leaves this module, so a
-router never sees ``temporalio.*`` types. Connection and RPC transport
-failures become ``InfrastructureError`` (-> 502). The two cases that are
-genuinely *state* problems rather than infrastructure problems - starting a
-workflow that already exists, and signalling a workflow that is not running -
-become ``DomainError`` (-> 409), because "you already did this" and "there is
-nothing to signal" are things the caller can understand and act on, not
-transient backend faults.
-"""
 
 from __future__ import annotations
 
@@ -60,10 +34,6 @@ _client: Client | None = None
 _client_lock = asyncio.Lock()
 
 
-# ---------------------------------------------------------------------------
-# Workflow id convention - defined once, here
-# ---------------------------------------------------------------------------
-
 
 def campaign_workflow_id(campaign_id: UUID | str) -> str:
     """The one definition of the CampaignWorkflow id convention."""
@@ -71,18 +41,10 @@ def campaign_workflow_id(campaign_id: UUID | str) -> str:
 
 
 def retry_asset_workflow_id(asset_id: UUID | str, attempt: int) -> str:
-    """The one definition of the RetryAssetWorkflow id convention.
-
-    ``attempt`` is included so a second manual retry of the same asset is a
-    distinct workflow rather than colliding with the first one's id. The
-    caller passes the asset row's current ``attempt_count``.
-    """
+    
     return f"retry-asset-{asset_id}-{attempt}"
 
 
-# ---------------------------------------------------------------------------
-# Connection lifecycle
-# ---------------------------------------------------------------------------
 
 
 async def get_temporal_client() -> Client:
@@ -105,10 +67,7 @@ async def get_temporal_client() -> Client:
             _client = await Client.connect(
                 settings.temporal_host,
                 namespace=settings.temporal_namespace,
-                # Must match app.worker exactly. The domain DTOs crossing the
-                # workflow boundary are pydantic models carrying UUID and
-                # Decimal fields, which the SDK's default JSON converter does
-                # not round-trip.
+              
                 data_converter=pydantic_data_converter,
             )
         except Exception as exc:
@@ -128,13 +87,7 @@ async def get_temporal_client() -> Client:
 
 
 async def close_temporal_client() -> None:
-    """Close the cached client, if one was ever opened.
-
-    The Python SDK does not expose a stable public ``close()`` on ``Client``
-    across versions, so this reaches for the underlying service client's
-    close if it exists and otherwise just drops the reference and lets the
-    connection be reclaimed.
-    """
+    
     global _client
 
     if _client is None:
@@ -196,12 +149,7 @@ async def start_campaign_workflow(
 
 
 async def signal_select_angle(campaign_id: UUID, angle_id: UUID) -> None:
-    """Signal the running ``CampaignWorkflow`` with the user's angle choice.
-
-    Called *after* the database write, never before - see the router. A
-    failure here means the DB and the workflow have diverged, which is
-    exactly why this raises loudly rather than logging and returning.
-    """
+    
     client = await get_temporal_client()
     workflow_id = campaign_workflow_id(campaign_id)
 
@@ -240,15 +188,7 @@ async def signal_select_angle(campaign_id: UUID, angle_id: UUID) -> None:
 async def start_retry_asset_workflow(
     retry_input: RetryAssetWorkflowInput, *, attempt: int
 ) -> tuple[str, str]:
-    """Start ``RetryAssetWorkflow`` for one asset. Returns (workflow_id, run_id).
-
-    Takes the full ``RetryAssetWorkflowInput`` rather than the
-    ``(campaign_id, asset_id_or_type)`` pair sketched in the module brief,
-    because the workflow genuinely requires ``creative_spec_id`` (and
-    ``hero_asset_id`` for the compose/video stages) and neither can be
-    derived here without a database read. Resolving those is the router's
-    job; this function stays purely about Temporal.
-    """
+    
     client = await get_temporal_client()
     settings = get_settings()
     workflow_id = retry_asset_workflow_id(retry_input.asset_id, attempt)
@@ -284,12 +224,7 @@ async def start_retry_asset_workflow(
 
 
 def _is_already_started(exc: BaseException) -> bool:
-    """Detect "workflow already started" across SDK versions.
-
-    The SDK has moved this exception between modules over time, so matching
-    on the class name plus the gRPC status is more durable than importing a
-    specific symbol.
-    """
+    
     if type(exc).__name__ == "WorkflowAlreadyStartedError":
         return True
     return isinstance(exc, RPCError) and exc.status is RPCStatusCode.ALREADY_EXISTS

@@ -77,14 +77,50 @@ async def _fetch_bytes(storage_url: str) -> bytes:
 
     Not covered by `StoragePort` (the port only defines `save`, per this
     module's spec), so this is a small local helper that understands the
-    two URL shapes the adapters in this module produce: `file://` (local
-    and fixture storage adapters) and `http(s)://` (S3-compatible adapter,
-    whether presigned or served from a public base URL).
+    URL shapes the adapters in this module produce: `file://` (used by
+    older/alternate storage adapters), the api's own `{api_base}/assets/...`
+    and `{api_base}/fixtures/...` static paths (local-storage and
+    fixture-storage adapters respectively -- read straight off the shared
+    bind-mounted disk rather than over HTTP, since the worker container has
+    no uvicorn listening on that host:port), and generic `http(s)://` for
+    everything else (S3-compatible adapter, whether presigned or served
+    from a public base URL).
     """
     if storage_url.startswith("file://"):
         parsed = urlparse(storage_url)
         path = url2pathname(parsed.path)
         with open(path, "rb") as f:
+            return f.read()
+
+    from app.config import get_settings
+    from pathlib import Path
+    from app.assets.adapters.storage_fixture import _FIXTURE_STORAGE_DIR
+
+    settings = get_settings()
+    api_base = getattr(settings, "api_base_url", "http://localhost:8000").rstrip("/")
+
+    # Both of these are URLs meant for a *browser* to load a static file from
+    # the api container's uvicorn process. Resolving them the same way here
+    # -- an httpx GET against api_base_url -- would work fine from a browser
+    # on the host, but not from the worker container: nothing listens on
+    # localhost:8000 *inside* the worker container (only `api` runs
+    # uvicorn). Since both directories are on the same bind mount
+    # (`..:/code`) shared by api and worker, we read the bytes straight off
+    # disk instead of round-tripping over HTTP -- mirroring exactly what
+    # StaticFiles would have served, for both the local-storage adapter
+    # (storage_local.py) and the fixture-storage adapter (storage_fixture.py).
+    assets_prefix = f"{api_base}/assets/"
+    if storage_url.startswith(assets_prefix):
+        key = storage_url[len(assets_prefix):]
+        local_path = Path(settings.local_storage_path) / key
+        with open(local_path, "rb") as f:
+            return f.read()
+
+    fixtures_prefix = f"{api_base}/fixtures/"
+    if storage_url.startswith(fixtures_prefix):
+        key = storage_url[len(fixtures_prefix):]
+        local_path = Path(_FIXTURE_STORAGE_DIR) / key
+        with open(local_path, "rb") as f:
             return f.read()
 
     async with httpx.AsyncClient(timeout=60) as client:
@@ -124,7 +160,7 @@ async def _record_failure(session, *, asset_id: UUID, attempt_started_at: dateti
 
 @activity.defn
 async def generate_hero_image(input: GenerateHeroImageInput) -> GenerateHeroImageOutput:
-    provider = "replicate-flux"
+    provider = "openai"
 
     async with session_scope() as session:
         spec = await get_creative_spec(session, input.creative_spec_id)
