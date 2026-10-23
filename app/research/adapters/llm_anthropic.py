@@ -22,8 +22,8 @@ logger = get_logger(__name__)
 
 
 DEFAULT_MODEL = "gpt-5.6-luna"
-DEFAULT_MAX_TOKENS = 4096
-DEFAULT_TIMEOUT_SECONDS = 90.0
+DEFAULT_MAX_TOKENS = 8192
+DEFAULT_TIMEOUT_SECONDS = 200.0
 
 
 class AnthropicLLMAdapter:
