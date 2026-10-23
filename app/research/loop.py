@@ -80,7 +80,7 @@ FINAL_ANSWER_GRACE_SECONDS = 45.0
 #: Failed model turns tolerated in a row before the loop gives up on gathering more.
 MAX_CONSECUTIVE_LLM_ERRORS = 2
 #: How much of a page goes back to the model in one tool result.
-MAX_PAGE_CHARS_TO_MODEL = 6_000
+MAX_PAGE_CHARS_TO_MODEL = 3_500
 #: How much of a page is stored as a ``research_sources`` excerpt.
 SOURCE_EXCERPT_CHARS = 800
 
@@ -98,9 +98,11 @@ Rules:
 1. Before every tool call, state in ONE short sentence why you are making it and what you \
 concluded from the previous step. That sentence is recorded as the visible trace of your \
 reasoning, so make it specific and honest.
-2. Prefer reading two or three genuinely informative pages over many shallow searches.
-3. Every angle you finally produce must cite at least one page you actually read.
-4. If you are told your budget is exhausted, stop calling tools and produce the best angles \
+2. MANDATORY: You MUST call read_page on at least 2-3 URLs before you are done. Search \
+snippets alone are NOT sufficient evidence — you must read full pages.
+3. Every angle you finally produce must cite at least one page you actually read with read_page.
+4. Do NOT stop after just a web_search. Always follow up with read_page calls.
+5. If you are told your budget is exhausted, stop calling tools and produce the best angles \
 you can from what you already have. Producing two well-sourced angles with an explicit note \
 about what is missing is correct; inventing a third is not.
 
@@ -525,6 +527,12 @@ class ResearchLoop:
         sources: dict[str, SourceRecord],
     ) -> tuple[AngleSet | None, TokenUsage, str | None]:
         schema = angle_set_json_schema()
+        # Strip out available tools from SYSTEM_PROMPT to prevent tool hallucinations
+        final_system_prompt = SYSTEM_PROMPT.replace(
+            "Available tools:\n- web_search(query, max_results): find candidate sources.\n- read_page(url): read one page you found, for the detail a snippet cannot give you.",
+            "NO MORE TOOLS ARE AVAILABLE. Your research phase is complete. You MUST output the final schema."
+        )
+
         history = list(messages) + [
             LLMMessage(
                 role="user",
@@ -540,7 +548,7 @@ class ResearchLoop:
             try:
                 structured = await asyncio.wait_for(
                     self._llm.structured_output(
-                        system=SYSTEM_PROMPT,
+                        system=final_system_prompt,
                         messages=history,
                         schema=schema,
                         schema_name="creative_angles",
@@ -629,7 +637,14 @@ def _render_brief(request: ResearchRequest) -> str:
         lines.append(f"Call to action: {request.cta}")
     if request.extra_context:
         lines.append(f"Additional context: {request.extra_context}")
-    lines += ["", "Begin with one search. State your reasoning before each tool call."]
+    lines += [
+        "",
+        "IMPORTANT: After your first search, you MUST use read_page on at least 2-3 of the "
+        "most promising URLs before writing your final angles. Do not attempt to produce "
+        "angles from search snippets alone — read the full pages first.",
+        "",
+        "Begin with one search. State your reasoning before each tool call.",
+    ]
     return "\n".join(lines)
 
 
