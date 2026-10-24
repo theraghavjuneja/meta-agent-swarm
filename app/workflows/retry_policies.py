@@ -25,7 +25,7 @@ SPEC
 
 IMAGE / COMPOSE / VIDEO
     Provider-sized.  Each covers one class of provider SLA:
-    - IMAGE: external image-generation provider (Replicate/Flux), slow.
+    - IMAGE: external image-generation provider (OpenAI), slow.
     - COMPOSE: local Pillow compositing, fast; policy is a safety net.
     - VIDEO: FFmpeg render, longest wall-clock time.
 
@@ -85,7 +85,7 @@ SPEC_RETRY_POLICY = RetryPolicy(
 SPEC_START_TO_CLOSE: timedelta = timedelta(seconds=180)
 
 # ---------------------------------------------------------------------------
-# Image generation — provider-sized (Replicate/Flux)
+# Image generation — provider-sized (OpenAI)
 # ---------------------------------------------------------------------------
 
 IMAGE_RETRY_POLICY = RetryPolicy(
