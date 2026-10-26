@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.common.exceptions import ValidationError
@@ -62,6 +62,37 @@ class Settings(BaseSettings):
     openai_model: str = Field(
         default="gpt-4o",
         description="Default OpenAI model name for the LLM provider adapter.",
+    )
+    openai_image_model: str | None = Field(
+        default=None,
+        description=(
+            "OpenAI image model for hero-image generation. Unset keeps the "
+            "adapter's built-in default."
+        ),
+    )
+    openai_image_size: str = Field(
+        default="1024x1536",
+        description=(
+            "Hero image size requested from the image model. Portrait 2:3 is "
+            "deliberate: the 9:16 ad/video crop keeps ~84% of its width and "
+            "the 1:1 crop keeps the full width, instead of a square hero "
+            "being cropped to 56% width and upscaled ~1.9x for 9:16."
+        ),
+    )
+    openai_image_quality: Literal["low", "medium", "high", "auto"] = Field(
+        default="high",
+        description=(
+            "Image quality tier. 'auto' lets the provider pick per request, "
+            "which is a source of run-to-run variance; ad creatives pin 'high'."
+        ),
+    )
+    openai_image_input_fidelity: Literal["high", "low"] | None = Field(
+        default="high",
+        description=(
+            "input_fidelity sent with reference-image edits. 'high' tells the "
+            "model to preserve the packshot's logo/label detail. Set empty to "
+            "omit the parameter for models that do not accept it."
+        ),
     )
     tavily_api_key: str | None = Field(
         default=None,
@@ -169,6 +200,14 @@ class Settings(BaseSettings):
         gt=0,
         description="Maximum accepted duration, in seconds, for the generated video.",
     )
+
+    @field_validator("openai_image_model", "openai_image_input_fidelity", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        # `OPENAI_IMAGE_INPUT_FIDELITY=` in .env means "omit it", not "".
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @model_validator(mode="after")
     def _validate_cross_field_rules(self) -> Settings:

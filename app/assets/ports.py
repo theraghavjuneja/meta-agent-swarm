@@ -39,16 +39,33 @@ class GeneratedImage:
 
 @dataclass(frozen=True)
 class VideoRenderSpec:
-    """Everything the video render pipeline needs, sourced from
-    creative_specs.video_outline plus the target format. `extra` carries any
-    additional outline fields a given adapter wants to use without forcing a
-    schema change here."""
+    """Everything the video render pipeline needs, sourced from the creative
+    spec plus the target format. `extra` carries any additional outline
+    fields a given adapter wants to use without forcing a schema change here.
+
+    The three `*_layer` fields are pre-rendered by app/assets/compositing.py
+    (PNG bytes at exactly target_width x target_height) so the video uses the
+    identical typography, colors and layout as the two still ads. Adapters
+    only animate them; they never draw text themselves. They are optional so
+    that an adapter can still render (e.g. the fixture) without them.
+
+    - `background_frame`: the hero image framed for the video's aspect ratio.
+    - `headline_layer`: transparent overlay with eyebrow + headline.
+    - `end_card_frame`: full-frame end card (framed hero + legibility
+      treatment + headline), without the CTA button.
+    - `cta_layer`: transparent overlay with just the CTA button, so it can
+      animate in on top of the end card.
+    """
 
     headline_text: str
     cta_text: str
     target_width: int
     target_height: int
     target_duration_seconds: float
+    background_frame: bytes | None = None
+    headline_layer: bytes | None = None
+    end_card_frame: bytes | None = None
+    cta_layer: bytes | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -84,10 +101,22 @@ class StoredAsset:
 
 
 class ImageGenerationPort(Protocol):
-    async def generate(self, prompt: str, idempotency_key: str, **params: Any) -> GeneratedImage:
+    async def generate(
+        self,
+        prompt: str,
+        idempotency_key: str,
+        *,
+        reference_image: bytes | None = None,
+        **params: Any,
+    ) -> GeneratedImage:
         """Generate a hero image from `prompt`. `idempotency_key` is passed
         through to providers that support one, so a retried call can't cause
-        a second paid generation for the same logical asset."""
+        a second paid generation for the same logical asset.
+
+        `reference_image` is the user-supplied product packshot (PNG bytes),
+        when there is one. Adapters must send it to the model as an image
+        input -- not merely mention it in the prompt -- so the generated
+        scene reproduces the real product."""
         ...
 
 
@@ -95,8 +124,9 @@ class VideoRenderPort(Protocol):
     async def render(
         self, hero_image: bytes | Path, spec: VideoRenderSpec, idempotency_key: str
     ) -> GeneratedVideo:
-        """Render a video animating `hero_image` per `spec` (pan/zoom,
-        headline reveal, CTA end frame)."""
+        """Render a video animating `hero_image` per `spec`: an opening
+        hook scene with the headline, a product push-in, and a CTA end
+        card."""
         ...
 
 
