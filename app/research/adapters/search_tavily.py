@@ -10,6 +10,7 @@ activity that ultimately calls this adapter) governs retries for the whole activ
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from app.common.exceptions import InfrastructureError
@@ -26,7 +27,7 @@ MAX_SNIPPET_CHARS = 600
 class TavilySearchAdapter:
     """``WebSearchPort`` backed by the Tavily async client."""
 
-    def __init__(self, *, api_key: str, search_depth: str = "basic") -> None:
+    def __init__(self, *, api_key: str, search_depth: str = "advanced") -> None:
         if not api_key:
             raise InfrastructureError("TAVILY_API_KEY is not configured.")
         from tavily import AsyncTavilyClient  # imported here: adapters own the SDK
@@ -34,8 +35,17 @@ class TavilySearchAdapter:
         self._client = AsyncTavilyClient(api_key=api_key)
         self._search_depth = search_depth
 
-    async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
-        payload = await self._search(query=query, max_results=max_results)
+    async def search(
+        self,
+        query: str,
+        max_results: int = 5,
+        *,
+        exclude_domains: Sequence[str] = (),
+    ) -> list[SearchResult]:
+        kwargs: dict[str, Any] = {"query": query, "max_results": max_results, "topic": "general"}
+        if exclude_domains:
+            kwargs["exclude_domains"] = list(exclude_domains)
+        payload = await self._search(**kwargs)
         raw_results = payload.get("results", []) if isinstance(payload, dict) else []
 
         results: list[SearchResult] = []
