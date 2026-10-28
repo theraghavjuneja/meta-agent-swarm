@@ -148,14 +148,22 @@ class CreativeSpecSchema(BaseModel):
         min_length=1,
         description="Primary text for the ad post (shown beside the creative, not on it).",
     )
+    # LEGACY (pre brief-verbatim CTA) -- the LLM wrote its own button label:
+    # cta: str = Field(
+    #     ...,
+    #     min_length=1,
+    #     max_length=40,
+    #     description=(
+    #         "Button label, 2-4 words, at most 40 characters, derived from the "
+    #         "brief's call to action."
+    #     ),
+    # )
+    # Kept in the schema for compatibility, but service.py replaces it with the
+    # brief's CTA verbatim. No length cap: the brief's own 255-char limit applies.
     cta: str = Field(
         ...,
         min_length=1,
-        max_length=40,
-        description=(
-            "Button label, 2-4 words, at most 40 characters, derived from the "
-            "brief's call to action."
-        ),
+        description="Repeat the brief's call to action exactly, character for character.",
     )
     product_identity: ProductIdentity
     scene_description: str = Field(
@@ -186,6 +194,16 @@ class CreativeSpecSchema(BaseModel):
         ),
     )
     video_outline: VideoOutline
+    typography_style: Literal["modern_clean", "editorial_serif", "bold_athletic"] = Field(
+        default="modern_clean",
+        description=(
+            "Type system for the overlaid copy, matched to the brand and tone: "
+            "'editorial_serif' for premium, luxury, beauty, fragrance or fashion "
+            "(refined serif, spaced capitals, understated CTA); 'bold_athletic' for "
+            "fitness, sports, nutrition, energy (heavy condensed capitals, solid CTA "
+            "button); 'modern_clean' for everything else (clean sans)."
+        ),
+    )
 
     @field_validator("palette")
     @classmethod
