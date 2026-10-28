@@ -60,7 +60,7 @@ data. All campaign, research, spec and asset data lives in the app's own Postgre
 app/
 ├── api/            FastAPI app, routers, Pydantic response schemas, Temporal client wiring
 ├── campaigns/       Campaign lifecycle: brief, status, stage events, usage ledger
-├── research/         The bounded ReAct research agent + its persistence
+├── research/         The research harness (plan → scoped search/read → verified findings → angles) + its persistence
 ├── creative/          LLM → structured creative-spec generation
 ├── assets/            Image generation, deterministic compositing, ffmpeg video, storage adapters
 ├── workflows/          Temporal workflow definitions + retry policies (the orchestration layer)
@@ -308,10 +308,10 @@ This trips people up, so it's worth being explicit:
 
 | Stage | Who/what produces it | Consumes |
 |---|---|---|
-| **3 creative angles** | LLM, via a bounded ReAct loop (`app/research/loop.py`) with real `web_search`/`read_page` tool calls | Product brief |
+| **3 creative angles** | LLM, via the research harness (`app/research/loop.py`): a plan on fixed ad-useful lenses, real `web_search`/`read_page` tool calls behind deterministic scope gates (`source_policy.py`), per-page extraction of **verbatim-verified** quotes, then angles that cite finding ids | Product brief |
 | **Creative spec** (`hook`, `approved_copy`, `cta`, `product_identity`, `scene_description`, `palette`, `composition_guidance`, `video_outline`) | **One structured-output LLM call** (`app/creative/service.py`), grounded in the selected angle + brief, validated against `CreativeSpecSchema` (`extra="forbid"`) with up to 3 corrective retries on validation failure | Selected angle, brief |
 | **Hero image** | OpenAI image API. Text-to-image (`images.generate`) — or, when the brief has a reference packshot, `images.edit` with that packshot as the **image input** so the model reproduces the real product. Portrait `1024x1536`, `quality=high` (both configurable). | The full prompt from `app/assets/prompts.py`: product identity + `scene_description` + `composition_guidance` + `palette`, wrapped in a fixed house style and hard rules (see below) |
-| **1:1 and 9:16 ad images** | **Not separately generated.** Deterministic Pillow layout engine (`app/assets/compositing.py`): subject-aware crop of the hero, copy placed in the calmer zone inside Meta's safe zones, measured-contrast ink + soft gradient, bundled Inter Display type (eyebrow, auto-fitted/line-balanced headline, CTA pill in the palette accent) | Hero image bytes + `hook`/`cta`/`palette`/`product_identity.name` |
+| **1:1 and 9:16 ad images** | **Not separately generated.** Deterministic Pillow layout engine (`app/assets/compositing.py`): a product-saliency check, several candidate layouts inside Meta's safe zones scored for collision/busyness/contrast/size, post-render contrast validation, and a type system chosen by the spec (`editorial_serif` / `bold_athletic` / `modern_clean`). The image model never draws copy. A layout report is stored in the asset's `generation_prompt`. | Hero image bytes + `hook` + the **brief's CTA verbatim** + `palette`/`product_identity.name`/`typography_style` |
 | **Video** | **Not AI-generated.** `app/assets/adapters/video_ffmpeg.py`: Pillow renders every frame (hook push-in with headline reveal → product push-in → end card with CTA pop, crossfades), FFmpeg encodes H.264 High / BT.709 / 30 fps / `+faststart` with a silent AAC track | Hero bytes + the **same** 9:16 design layers the still uses (`render_video_layers`) + `VIDEO_*` settings |
 
 **Consistency strategy:** one generated hero image is the shared visual anchor;
@@ -350,6 +350,30 @@ visible without a provider call.
   it (text-only port), so `product_identity` is still derived from the brief text.
 
 ---
+
+### 5.1 Research harness (`app/research/loop.py`)
+
+```
+plan ──► [ web_search(lens, query) ─gate─► screened results ─► read_page(lens, url) ─gate─► extract + verify quotes ]* ──► synthesise
+ │                   ▲ research-state summary after every step (budget, sources, uncovered lenses) │
+ └─ 3-5 questions on fixed lenses: audience_voice · purchase_drivers · objections · usage_moments · creative_landscape
+```
+
+| Gate (`source_policy.py`, deterministic) | Rejects |
+|---|---|
+| Lens | a search/read whose `lens` is not in the plan |
+| Query | background-knowledge queries (how it is made, history, definitions, composition, company/financial news) and queries mentioning none of the plan's anchor terms |
+| Results | general news, encyclopedias, social/video sites (also excluded provider-side), and off-topic titles/snippets |
+| Read | URLs not among kept search results, re-reads, more than `RESEARCH_MAX_READS_PER_DOMAIN` per site |
+| Evidence | findings whose quote is not found verbatim on the page; pages with no verified finding do not count as sources |
+
+Every decision above is a trace row (`research_steps`): the plan, each query with
+its kept and screened-out results (with reasons), each read with its verified and
+discarded findings, coverage checks, and the synthesis. Angles store their
+**sourced observations** (quote + URL) in `creative_angles.observations`, apart
+from the interpretive `audience_insight`/`hook`/`visual_direction`/`rationale`;
+the UI shows the two separately. The observations also feed the creative-spec
+prompt, so the scene and hook stay grounded in evidence.
 
 ## 6. External providers & fixture mode
 
@@ -519,8 +543,13 @@ upside.
 3. Reference-image fidelity depends on the image model: `images.edit` receives
    the packshot, but small label text can still drift. There is no automated
    check that the generated product matches the reference.
-4. The research loop's system prompt asks for "2–3" pages read, while the brief
-   asks for "at least 3" — currently a soft gap-note, not a hard minimum.
-5. Asset rows label the image-generation provider as `"replicate-flux"` even
+4. "At least 3 relevant sources" is enforced by sending the agent back (up to
+   twice) while budget remains; if the web genuinely has less, the run finishes
+   with a gap note rather than padding with irrelevant pages.
+5. The product-saliency check is a heuristic (colour distance + edges), not a
+   vision model. On busy scenes it marks more than the product, which makes
+   layouts conservative rather than wrong; the layout report's `collision` flag
+   shows when no candidate could avoid the product.
+6. Asset rows label the image-generation provider as `"replicate-flux"` even
    though the adapter underneath calls OpenAI — cosmetic, but worth fixing before
    relying on `provider_usage` for cost attribution.
