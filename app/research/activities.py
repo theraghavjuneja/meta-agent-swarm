@@ -90,6 +90,9 @@ async def run_research_agent(request: ResearchRequest) -> ResearchOutcome:
         max_tool_calls=max_tool_calls,
         max_iterations=max_iterations,
         timeout_seconds=timeout_seconds,
+        min_sources=int(getattr(settings, "research_min_sources", 3)),
+        max_reads_per_domain=int(getattr(settings, "research_max_reads_per_domain", 2)),
+        extra_blocked_domains=list(getattr(settings, "research_excluded_domains", []) or []),
     )
 
     started = time.monotonic()
