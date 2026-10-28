@@ -15,6 +15,7 @@ used here -- retrying is Temporal's job.
 from __future__ import annotations
 
 import io
+import json
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from urllib.request import url2pathname
@@ -29,7 +30,7 @@ from app.assets.adapters import (
     get_storage_adapter,
     get_video_adapter,
 )
-from app.assets.compositing import compose_1x1, compose_9x16, render_video_layers
+from app.assets.compositing import compose_with_report, render_video_layers
 from app.assets.dto import (
     ComposeAdInput,
     ComposeAdOutput,
@@ -304,8 +305,11 @@ async def compose_ad(input: ComposeAdInput) -> ComposeAdOutput:
 
         try:
             hero_bytes = await _fetch_bytes(hero_asset.storage_url)
-            compose_fn = compose_1x1 if asset_type == AssetType.AD_1X1 else compose_9x16
-            composed_bytes = compose_fn(hero_bytes, spec)
+            # LEGACY (pre layout report):
+            # compose_fn = compose_1x1 if asset_type == AssetType.AD_1X1 else compose_9x16
+            # composed_bytes = compose_fn(hero_bytes, spec)
+            width, height = _AD_DIMENSIONS[asset_type]
+            composed_bytes, layout_report = compose_with_report(hero_bytes, spec, (width, height))
 
             storage_adapter = get_storage_adapter()
             key = _storage_key(input.campaign_id, asset_type, "jpg")
@@ -313,8 +317,25 @@ async def compose_ad(input: ComposeAdInput) -> ComposeAdOutput:
                 composed_bytes, key, _STORAGE_CONTENT_TYPES[asset_type]
             )
 
-            width, height = _AD_DIMENSIONS[asset_type]
-            asset = await mark_completed(session, asset.id, storage_url=stored.storage_url, width=width, height=height)
+            # Retained with the asset: the exact copy overlaid and why it went where
+            # it did (placement, product overlap, measured contrast, collision flag).
+            generation_record = json.dumps(
+                {
+                    "compositor": "deterministic-overlay",
+                    "headline": spec.hook,
+                    "cta": spec.cta,
+                    "typography_style": getattr(spec, "typography_style", None),
+                    "layout": layout_report,
+                }
+            )
+            asset = await mark_completed(
+                session,
+                asset.id,
+                storage_url=stored.storage_url,
+                width=width,
+                height=height,
+                generation_prompt=generation_record,
+            )
             await _record_success(session, asset_id=asset.id, attempt_started_at=attempt_started_at, provider_request_id=None)
         except InfrastructureError as exc:
             await _record_failure(session, asset_id=asset.id, attempt_started_at=attempt_started_at, error=str(exc))
