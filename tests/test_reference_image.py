@@ -71,6 +71,30 @@ def test_openai_adapter_sends_reference_as_image_input():
     assert kwargs["quality"] == "high"
 
 
+def test_openai_adapter_drops_input_fidelity_when_model_rejects_it():
+    adapter, fake = _openai_adapter_with_fake(input_fidelity="high")
+
+    class _Rejected(Exception):
+        status_code = 400
+        body = {"error": {"param": "input_fidelity", "message": "does not support the 'input_fidelity' parameter"}}
+
+    real_edit = fake.edit
+
+    async def edit(**kwargs):
+        if kwargs.get("extra_body"):
+            fake.calls.append(("edit", kwargs))
+            raise _Rejected()
+        return await real_edit(**kwargs)
+
+    fake.edit = edit
+    asyncio.run(adapter.generate("prompt", "key", reference_image=_png()))
+    asyncio.run(adapter.generate("prompt", "key", reference_image=_png()))
+
+    sent = [kw.get("extra_body") for method, kw in fake.calls if method == "edit"]
+    # One rejected attempt, then it succeeds without the parameter and stops sending it.
+    assert sent == [{"input_fidelity": "high"}, None, None]
+
+
 def test_openai_adapter_without_reference_uses_text_to_image():
     adapter, fake = _openai_adapter_with_fake()
     asyncio.run(adapter.generate("prompt", "key"))
