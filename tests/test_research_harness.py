@@ -358,3 +358,57 @@ def test_fixture_mode_runs_the_full_harness_offline():
     assert result.gap_note is None
     phases = [s.input.get("phase") for s in recorder.steps if s.step_type is StepType.DECIDE]
     assert phases == ["plan", "synthesise"]
+
+
+# --------------------------------------------------------------------------------------
+# Real-provider robustness (seen in the first live run)
+# --------------------------------------------------------------------------------------
+
+
+def test_overlong_quote_is_clipped_not_fatal_and_bad_findings_dropped_alone():
+    from app.research.dto import PageFindings
+    from app.research.loop import _salvage_findings
+
+    long_quote = "word " * 150  # 750 chars, over the 400 limit
+    data = {
+        "relevant": True,
+        "relevance_note": "x" * 500,
+        "findings": [
+            {"lens": "objections", "observation": "ok", "quote": long_quote},
+            {"lens": "not_a_lens", "observation": "bad", "quote": "invalid lens here"},
+        ],
+    }
+    parsed = PageFindings.model_validate(_salvage_findings(data))
+    assert len(parsed.findings) == 1
+    clipped = parsed.findings[0].quote
+    assert len(clipped) <= 400 and long_quote.strip().startswith(clipped)  # still a verbatim prefix
+    assert len(parsed.relevance_note) <= 300
+
+
+def test_empty_pages_mark_the_site_unreadable_without_spending_its_read_budget(monkeypatch):
+    import tests.test_research_harness as mod
+
+    monkeypatch.setitem(mod.PAGES, REDDIT, "Reddit")  # what a bot wall returns
+    turns = [
+        ("Search.", [_search("audience_voice", "protein powder taste complaints reddit")]),
+        ("Read.", [_read("audience_voice", REDDIT)]),
+        ("Retry the same site.", [_search("objections", "protein powder taste complaints reviews")]),
+        ("Done.", []),
+    ]
+    _, steps = _run(ScriptedLLM(turns))
+    reddit_read = next(s for s in steps if s.step_type is StepType.READ_PAGE)
+    assert "not readable" in reddit_read.output["extraction_error"]
+    later_search = [s for s in steps if s.step_type is StepType.SEARCH][-1]
+    assert REDDIT not in {r["url"] for r in later_search.output["kept"]}
+
+
+def test_strict_schema_closes_objects_and_drops_unsupported_keywords():
+    from app.research.adapters.llm_anthropic import _strict_schema
+    from app.research.dto import PageFindings
+
+    schema = _strict_schema(PageFindings.model_json_schema())
+    finding = schema["$defs"]["ExtractedFinding"]
+    assert schema["additionalProperties"] is False and finding["additionalProperties"] is False
+    assert set(schema["required"]) == {"relevant", "relevance_note", "findings"}
+    assert "maxLength" not in finding["properties"]["quote"]
+    assert "default" not in schema["properties"]["findings"]

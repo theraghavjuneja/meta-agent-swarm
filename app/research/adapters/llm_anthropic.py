@@ -96,13 +96,19 @@ class AnthropicLLMAdapter:
         schema_name: str,
         schema_description: str = "",
     ) -> StructuredOutput:
+        # Strict mode makes OpenAI constrain decoding to the schema, so the payload is
+        # always well-formed JSON with exactly the declared keys. Without it the model
+        # occasionally emitted malformed arguments or invented keys, and one bad
+        # finding cost the whole page. Field-level bounds the strict subset cannot
+        # express (lengths) are still enforced by the caller's pydantic validation.
         tool = {
             "type": "function",
             "function": {
                 "name": schema_name,
                 "description": schema_description
                 or f"Return the final {schema_name} payload conforming to this schema.",
-                "parameters": schema,
+                "parameters": _strict_schema(schema),
+                "strict": True,
             },
         }
 
@@ -127,13 +133,24 @@ class AnthropicLLMAdapter:
             },
         ]
 
-        response = await self._create(
+        request = dict(
             model=self._model,
             max_completion_tokens=self._max_tokens,
             messages=_serialise_messages(system, messages),
             tools=[tool] + dummy_tools,
             tool_choice={"type": "function", "function": {"name": schema_name}},
         )
+        try:
+            response = await self._create(**request)
+        except InfrastructureError as exc:
+            # A schema the strict subset cannot represent is rejected up front (400);
+            # fall back to plain function calling rather than failing the step.
+            if "strict" not in str(exc) and "schema" not in str(exc).lower():
+                raise
+            logger.warning("research.openai.strict_schema_rejected", schema=schema_name, error=str(exc)[:300])
+            tool["function"]["parameters"] = schema
+            tool["function"].pop("strict", None)
+            response = await self._create(**request)
         message = response.choices[0].message
         for tool_call in getattr(message, "tool_calls", None) or []:
             if getattr(tool_call.function, "name", None) == schema_name:
@@ -247,6 +264,29 @@ def _serialise_tools(tools: Sequence[ToolDefinition]) -> list[dict[str, Any]]:
             }
         )
     return result
+
+
+# Keywords outside OpenAI's strict structured-output subset; they are dropped from the
+# copy sent to the model and still enforced by the caller's pydantic validation.
+_STRICT_UNSUPPORTED = {"default", "minLength", "maxLength", "examples"}
+
+
+def _strict_schema(schema: Any) -> Any:
+    """Copy of a pydantic JSON schema in the shape strict mode requires: every object
+    closed (``additionalProperties: false``) with all of its properties required --
+    optional fields are already ``anyOf [..., null]`` in pydantic's output."""
+    if isinstance(schema, list):
+        return [_strict_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out = {k: _strict_schema(v) for k, v in schema.items() if k not in _STRICT_UNSUPPORTED}
+    if out.get("type") == "object" or "properties" in out:
+        out["additionalProperties"] = False
+        out["required"] = list((out.get("properties") or {}).keys())
+    if "$ref" in out and len(out) > 1:
+        # Strict mode does not allow siblings next to $ref (e.g. a description).
+        out = {"$ref": out["$ref"]}
+    return out
 
 
 def _parse_arguments(raw_arguments: str) -> dict[str, Any]:
