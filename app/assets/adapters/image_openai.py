@@ -68,13 +68,24 @@ class OpenAIImageGenerationAdapter:
         idempotency_key: str,
         *,
         reference_image: bytes | None = None,
+        mask: bytes | None = None,
         **params: Any,
     ) -> GeneratedImage:
         size = params.get("size", self._size)
         quality = params.get("quality", self._quality)
 
         try:
-            if reference_image is not None:
+            if mask is not None and reference_image is not None:
+                # Outpaint/inpaint: repaint only the mask's transparent pixels.
+                result = await self._client.images.edit(
+                    model=self._model,
+                    image=("image.png", reference_image, "image/png"),
+                    mask=("mask.png", mask, "image/png"),
+                    prompt=prompt,
+                    size=size,
+                    quality=quality,
+                )
+            elif reference_image is not None:
                 result = await self._edit(prompt, reference_image, size=size, quality=quality)
             else:
                 result = await self._client.images.generate(
@@ -108,6 +119,7 @@ class OpenAIImageGenerationAdapter:
             size=size,
             quality=quality,
             used_reference_image=reference_image is not None,
+            used_mask=mask is not None,
         )
         return GeneratedImage(
             data=data,
