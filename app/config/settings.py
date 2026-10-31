@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.common.exceptions import ValidationError
@@ -37,6 +37,11 @@ class Settings(BaseSettings):
         description="Async Postgres DSN (SQLAlchemy 2.0 async driver, e.g. asyncpg).",
     )
 
+    api_base_url: str = Field(
+        default="http://localhost:8000",
+        description="The base URL of this API, used to construct absolute URLs to static assets.",
+    )
+
     temporal_host: str = Field(
         default="localhost:7233",
         description="Temporal server address (host:port) for the worker to connect to.",
@@ -50,21 +55,58 @@ class Settings(BaseSettings):
         description="Temporal task queue the worker polls and workflows are started on.",
     )
 
-    anthropic_api_key: str | None = Field(
+    openai_api_key: str | None = Field(
         default=None,
-        description="Anthropic API key, used by the LLM provider adapter.",
+        description="OpenAI API key, used by the LLM provider adapter.",
     )
-    anthropic_model: str = Field(
-        default="claude-sonnet-5",
-        description="Default Anthropic model name for the LLM provider adapter.",
+    openai_model: str = Field(
+        default="gpt-4o",
+        description="Default OpenAI model name for the LLM provider adapter.",
+    )
+    openai_image_model: str | None = Field(
+        default=None,
+        description=(
+            "OpenAI image model for hero-image generation. Unset keeps the "
+            "adapter's built-in default."
+        ),
+    )
+    openai_image_size: str = Field(
+        default="1024x1536",
+        description=(
+            "Hero image size requested from the image model. Portrait 2:3 is "
+            "deliberate: the 9:16 ad/video crop keeps ~84% of its width and "
+            "the 1:1 crop keeps the full width, instead of a square hero "
+            "being cropped to 56% width and upscaled ~1.9x for 9:16."
+        ),
+    )
+    openai_image_quality: Literal["low", "medium", "high", "auto"] = Field(
+        default="high",
+        description=(
+            "Image quality tier. 'auto' lets the provider pick per request, "
+            "which is a source of run-to-run variance; ad creatives pin 'high'."
+        ),
+    )
+    openai_image_input_fidelity: Literal["high", "low"] | None = Field(
+        default="high",
+        description=(
+            "input_fidelity sent with reference-image edits. 'high' tells the "
+            "model to preserve the packshot's logo/label detail. Set empty to "
+            "omit the parameter for models that do not accept it."
+        ),
+    )
+    ad_text_mode: Literal["overlay", "model"] = Field(
+        default="overlay",
+        description=(
+            "Who renders the ad copy. 'overlay': the image model paints a text-free "
+            "hero and the compositor sets the headline and CTA on it (deterministic "
+            "spelling and placement). 'model': the image model designs one finished "
+            "1:1 master ad including all copy, and the other formats are derived from "
+            "that master by outpainting (see app/assets/formats.py)."
+        ),
     )
     tavily_api_key: str | None = Field(
         default=None,
         description="Tavily API key, used by the web search / page reader provider adapter.",
-    )
-    replicate_api_token: str | None = Field(
-        default=None,
-        description="Replicate API token, used by the image generation provider adapter.",
     )
 
     storage_backend: Literal["local", "s3"] = Field(
@@ -72,7 +114,7 @@ class Settings(BaseSettings):
         description="Which StoragePort adapter to construct: local filesystem or S3-compatible.",
     )
     local_storage_path: str = Field(
-        default="./data/storage",
+        default="./data/assets",
         description="Base path on disk used when storage_backend='local'.",
     )
     s3_bucket: str | None = Field(
@@ -107,7 +149,7 @@ class Settings(BaseSettings):
         description="Maximum number of tool calls allowed in a single research loop run.",
     )
     research_max_iterations: int = Field(
-        default=6,
+        default=8,
         gt=0,
         description="Maximum number of iterations allowed in a single research loop run.",
     )
@@ -115,6 +157,31 @@ class Settings(BaseSettings):
         default=300,
         gt=0,
         description="Wall-clock timeout, in seconds, for a single research loop run.",
+    )
+
+    research_min_sources: int = Field(
+        default=3,
+        gt=0,
+        description=(
+            "Relevant source pages (pages with at least one verified finding) the agent "
+            "is sent back for before it may stop, while budget remains."
+        ),
+    )
+    research_max_reads_per_domain: int = Field(
+        default=2,
+        gt=0,
+        description="Cap on pages read from one site, so 'N sources' means N viewpoints.",
+    )
+    research_search_depth: Literal["basic", "advanced"] = Field(
+        default="advanced",
+        description="Tavily search depth. 'advanced' ranks by relevance to the query more tightly.",
+    )
+    research_excluded_domains: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Extra domains never searched or read, on top of the built-in news / "
+            "encyclopedia / social-video exclusions (JSON array)."
+        ),
     )
 
     max_reference_image_mb: int = Field(
@@ -169,15 +236,22 @@ class Settings(BaseSettings):
         description="Maximum accepted duration, in seconds, for the generated video.",
     )
 
+    @field_validator("openai_image_model", "openai_image_input_fidelity", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        # `OPENAI_IMAGE_INPUT_FIDELITY=` in .env means "omit it", not "".
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @model_validator(mode="after")
     def _validate_cross_field_rules(self) -> Settings:
         errors: list[str] = []
 
         if self.provider_mode == "real":
             required_provider_keys = {
-                "ANTHROPIC_API_KEY": self.anthropic_api_key,
+                "OPENAI_API_KEY": self.openai_api_key,
                 "TAVILY_API_KEY": self.tavily_api_key,
-                "REPLICATE_API_TOKEN": self.replicate_api_token,
             }
             errors += [
                 name for name, value in required_provider_keys.items() if not value

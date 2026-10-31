@@ -2,3 +2,18 @@ prompt.md
 db.md
 venv/
 .env
+docker/.env
+node_modules/
+# Python caches
+__pycache__/
+
+# Local pipeline runs: generated campaign assets, uploaded reference images and
+# review sheets. The example outputs already tracked under data/assets/campaigns
+# stay tracked; add new examples deliberately with `git add -f`.
+data/assets/campaigns/
+data/assets/reference-images/
+data/review/
+
+# Editor settings and local archives
+.idea/
+*.zip

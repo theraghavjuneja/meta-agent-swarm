@@ -63,15 +63,15 @@ FIXTURE_PAGES: dict[str, PageContent] = {
         truncated=False,
         original_char_count=len(_SLEEP_PAGE),
     ),
-    "https://example.com/fixtures/consumer-wellness-trends": PageContent(
-        url="https://example.com/fixtures/consumer-wellness-trends",
+    "https://example.org/fixtures/consumer-wellness-trends": PageContent(
+        url="https://example.org/fixtures/consumer-wellness-trends",
         title="[FIXTURE] Consumer wellness category trends",
         extracted_text=_TRENDS_PAGE,
         truncated=False,
         original_char_count=len(_TRENDS_PAGE),
     ),
-    "https://example.com/fixtures/evening-routine-forum": PageContent(
-        url="https://example.com/fixtures/evening-routine-forum",
+    "https://example.net/fixtures/evening-routine-forum": PageContent(
+        url="https://example.net/fixtures/evening-routine-forum",
         title="[FIXTURE] Community thread: evening routines",
         extracted_text=_FORUM_PAGE,
         truncated=False,

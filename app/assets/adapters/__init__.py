@@ -14,13 +14,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.assets.adapters.image_fixture import FixtureImageGenerationAdapter
-from app.assets.adapters.image_replicate import ReplicateImageGenerationAdapter
+from app.assets.adapters.image_openai import OpenAIImageGenerationAdapter
 from app.assets.adapters.storage_fixture import FixtureStorageAdapter
 from app.assets.adapters.storage_local import LocalFilesystemStorageAdapter
 from app.assets.adapters.storage_s3 import S3CompatibleStorageAdapter
+from app.assets.adapters.subject_locator_fixture import FixtureSubjectLocatorAdapter
+from app.assets.adapters.subject_locator_openai import OpenAISubjectLocatorAdapter
 from app.assets.adapters.video_ffmpeg import FfmpegVideoRenderAdapter
 from app.assets.adapters.video_fixture import FixtureVideoRenderAdapter
-from app.assets.ports import ImageGenerationPort, StoragePort, VideoRenderPort
+from app.assets.ports import ImageGenerationPort, StoragePort, SubjectLocatorPort, VideoRenderPort
 from app.config import get_settings
 
 
@@ -35,7 +37,13 @@ def get_image_adapter(settings=None, *, force_fail_once: bool = False) -> ImageG
     settings = settings or get_settings()
     if settings.provider_mode == "fixture":
         return FixtureImageGenerationAdapter(force_fail_once=force_fail_once)
-    return ReplicateImageGenerationAdapter()
+    return OpenAIImageGenerationAdapter(
+        api_token=settings.openai_api_key,
+        model=settings.openai_image_model,
+        size=settings.openai_image_size,
+        quality=settings.openai_image_quality,
+        input_fidelity=settings.openai_image_input_fidelity,
+    )
 
 
 def get_video_adapter(settings=None, *, force_fail_once: bool = False) -> VideoRenderPort:
@@ -43,6 +51,15 @@ def get_video_adapter(settings=None, *, force_fail_once: bool = False) -> VideoR
     if settings.provider_mode == "fixture":
         return FixtureVideoRenderAdapter(force_fail_once=force_fail_once)
     return FfmpegVideoRenderAdapter()
+
+
+def get_subject_locator(settings=None) -> SubjectLocatorPort:
+    """Vision check for the compositor: where is the product in the hero?
+    Uses the configured OpenAI chat model (it accepts image input)."""
+    settings = settings or get_settings()
+    if settings.provider_mode == "fixture":
+        return FixtureSubjectLocatorAdapter()
+    return OpenAISubjectLocatorAdapter(api_key=settings.openai_api_key, model=settings.openai_model)
 
 
 def get_storage_adapter(settings=None) -> StoragePort:

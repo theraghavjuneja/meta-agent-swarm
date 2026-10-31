@@ -190,6 +190,11 @@ class CreativeAngle(Base, IdMixin, TimestampMixin):
     hook: Mapped[str] = mapped_column(sa.Text, nullable=False)
     visual_direction: Mapped[str] = mapped_column(sa.Text, nullable=False)
     rationale: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    # Verified evidence (``SourcedObservation`` dicts): the *sourced* half of the angle,
+    # kept apart from the interpretive fields above.
+    observations: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=sa.text("'[]'::jsonb")
+    )
     is_selected: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, server_default=sa.false()
     )

@@ -70,6 +70,7 @@ class RetryAssetWorkflowInput:
     asset_type: str  # "hero_image" | "ad_1x1" | "ad_9x16" | "video"
     creative_spec_id: UUID
     hero_asset_id: UUID | None = None  # required for compose_ad and render_video retries
+    reference_image_url: str | None = None  # the brief's packshot, for hero_image retries
 
 
 @workflow.defn(name="RetryAssetWorkflow")
@@ -109,6 +110,7 @@ class RetryAssetWorkflow:
                     GenerateHeroImageInput(
                         campaign_id=campaign_id,
                         creative_spec_id=input.creative_spec_id,
+                        reference_image_url=input.reference_image_url,
                     ),
                     retry_policy=IMAGE_RETRY_POLICY,
                     start_to_close_timeout=IMAGE_START_TO_CLOSE,
