@@ -43,7 +43,8 @@ from app.assets.dto import (
 )
 from app.assets.models import AssetType, AttemptStatus
 from app.assets.ports import VideoRenderSpec
-from app.assets.prompts import build_hero_image_prompt
+from app.assets.formats import finish_outpaint, plan_outpaint, prepare_outpaint, square_from_master
+from app.assets.prompts import OUTPAINT_PROMPT, build_full_ad_prompt, build_hero_image_prompt
 from app.assets.repository import (
     derive_idempotency_key,
     ensure_pending,
@@ -81,6 +82,74 @@ _AD_DIMENSIONS = {
 
 def _storage_key(campaign_id: UUID, asset_type: AssetType, extension: str) -> str:
     return f"campaigns/{campaign_id}/{asset_type.value}.{extension}"
+
+
+# AD_TEXT_MODE=model: size of the finished master ad, and the derived formats.
+_MASTER_SIZE = "1024x1024"
+_DERIVED_9X16_KEY = "campaigns/{campaign_id}/master_ad_9x16.jpg"
+# A badge must stay a short phrase to be legible inside a small roundel.
+_MAX_BADGE_CHARS = 32
+
+
+async def _badge_claim(campaign_id: UUID) -> str | None:
+    """The first of the brief's verified claims short enough for a badge, verbatim.
+    The model mode's only copy besides hook and CTA -- never model-written."""
+    from app.campaigns import repository as campaigns_repository
+
+    campaign = await campaigns_repository.get(campaign_id)
+    for claim in list(getattr(campaign, "verified_claims", None) or []):
+        if isinstance(claim, str) and 0 < len(claim.strip()) <= _MAX_BADGE_CHARS:
+            return claim.strip()
+    return None
+
+
+async def _derive_9x16(image_adapter, master: bytes, campaign_id: UUID, idempotency_key: str) -> str:
+    """Outpaint the master into 9:16 (see app/assets/formats.py) and store it."""
+    target = _AD_DIMENSIONS[AssetType.AD_9X16]
+    plan = plan_outpaint(target)
+    master_png = _as_png(master)
+    canvas, mask = prepare_outpaint(master_png, plan)
+    outpainted = await image_adapter.generate(
+        OUTPAINT_PROMPT,
+        f"{idempotency_key}:outpaint_9x16",
+        reference_image=canvas,
+        mask=mask,
+        size=f"{plan.canvas_size[0]}x{plan.canvas_size[1]}",
+    )
+    final = finish_outpaint(outpainted.read_bytes(), master_png, plan, target)
+    stored = await get_storage_adapter().save(
+        final, _DERIVED_9X16_KEY.format(campaign_id=campaign_id), "image/jpeg"
+    )
+    return stored.storage_url
+
+
+def _as_png(image: bytes) -> bytes:
+    with Image.open(io.BytesIO(image)) as img:
+        out = io.BytesIO()
+        img.convert("RGB").save(out, format="PNG")
+        return out.getvalue()
+
+
+def _model_mode_record(hero_asset) -> dict | None:
+    """The hero's model-mode record, if the hero is a model-designed master ad.
+    Decided by what the hero *is*, not the current env var, so a retry after the
+    mode was switched still treats an existing hero correctly."""
+    try:
+        record = json.loads(hero_asset.generation_prompt or "")
+    except (TypeError, ValueError):
+        return None
+    return record if isinstance(record, dict) and record.get("ad_text_mode") == "model" else None
+
+
+async def _derived_9x16(hero_asset, hero_bytes: bytes, campaign_id: UUID, record: dict) -> bytes:
+    url = ((record.get("derived") or {}).get("ad_9x16") or {}).get("storage_url")
+    if url:
+        return await _fetch_bytes(url)
+    # Older master without a stored derivation: derive it now.
+    url = await _derive_9x16(
+        get_image_adapter(), hero_bytes, campaign_id, derive_idempotency_key(campaign_id, AssetType.HERO_IMAGE)
+    )
+    return await _fetch_bytes(url)
 
 
 async def _locate_subject(hero_bytes: bytes, spec) -> tuple[float, float, float, float] | None:
@@ -220,9 +289,16 @@ async def generate_hero_image(input: GenerateHeroImageInput) -> GenerateHeroImag
     provider = "openai"
     has_reference = bool(input.reference_image_url)
 
+    model_mode = get_settings().ad_text_mode == "model"
+    badge = await _badge_claim(input.campaign_id) if model_mode else None
+
     async with session_scope() as session:
         spec = await get_creative_spec(session, input.creative_spec_id)
-        prompt = build_hero_image_prompt(spec, has_reference_image=has_reference)
+        if model_mode:
+            # AD_TEXT_MODE=model: the "hero" is the finished 1:1 master ad, copy included.
+            prompt = build_full_ad_prompt(spec, has_reference_image=has_reference, badge=badge)
+        else:
+            prompt = build_hero_image_prompt(spec, has_reference_image=has_reference)
         asset = await ensure_pending(
             session,
             campaign_id=input.campaign_id,
@@ -242,9 +318,14 @@ async def generate_hero_image(input: GenerateHeroImageInput) -> GenerateHeroImag
                 else None
             )
             image_adapter = get_image_adapter()
-            generated = await image_adapter.generate(
-                prompt, idempotency_key, reference_image=reference_image
-            )
+            if model_mode:
+                generated = await image_adapter.generate(
+                    prompt, idempotency_key, reference_image=reference_image, size=_MASTER_SIZE
+                )
+            else:
+                generated = await image_adapter.generate(
+                    prompt, idempotency_key, reference_image=reference_image
+                )
             image_bytes = generated.read_bytes()
 
             storage_adapter = get_storage_adapter()
@@ -253,12 +334,27 @@ async def generate_hero_image(input: GenerateHeroImageInput) -> GenerateHeroImag
                 image_bytes, key, _STORAGE_CONTENT_TYPES[AssetType.HERO_IMAGE]
             )
 
+            record = None
+            if model_mode:
+                # Derive the taller format once, here, so the 9:16 still and the video
+                # share one outpaint (they run in parallel downstream).
+                derived_url = await _derive_9x16(image_adapter, image_bytes, input.campaign_id, idempotency_key)
+                record = json.dumps(
+                    {
+                        "ad_text_mode": "model",
+                        "master_prompt": prompt,
+                        "badge": badge,
+                        "derived": {"ad_9x16": {"storage_url": derived_url, "outpaint_prompt": OUTPAINT_PROMPT}},
+                    }
+                )
+
             asset = await mark_completed(
                 session,
                 asset.id,
                 storage_url=stored.storage_url,
                 width=generated.width,
                 height=generated.height,
+                generation_prompt=record,
             )
             await _record_success(
                 session,
@@ -322,10 +418,22 @@ async def compose_ad(input: ComposeAdInput) -> ComposeAdOutput:
             # compose_fn = compose_1x1 if asset_type == AssetType.AD_1X1 else compose_9x16
             # composed_bytes = compose_fn(hero_bytes, spec)
             width, height = _AD_DIMENSIONS[asset_type]
-            subject_hint = await _locate_subject(hero_bytes, spec)
-            composed_bytes, layout_report = compose_with_report(
-                hero_bytes, spec, (width, height), subject_hint=subject_hint
-            )
+            model_record = _model_mode_record(hero_asset)
+            if model_record is not None:
+                # AD_TEXT_MODE=model: the copy is already in the master; nothing is overlaid.
+                if asset_type == AssetType.AD_1X1:
+                    composed_bytes = square_from_master(hero_bytes, (width, height))
+                    source = "master"
+                else:
+                    # Already the exact 9:16 size (formats.finish_outpaint).
+                    composed_bytes = await _derived_9x16(hero_asset, hero_bytes, input.campaign_id, model_record)
+                    source = "master+outpaint"
+                layout_report = None
+            else:
+                subject_hint = await _locate_subject(hero_bytes, spec)
+                composed_bytes, layout_report = compose_with_report(
+                    hero_bytes, spec, (width, height), subject_hint=subject_hint
+                )
 
             storage_adapter = get_storage_adapter()
             key = _storage_key(input.campaign_id, asset_type, "jpg")
@@ -335,15 +443,27 @@ async def compose_ad(input: ComposeAdInput) -> ComposeAdOutput:
 
             # Retained with the asset: the exact copy overlaid and why it went where
             # it did (placement, product overlap, measured contrast, collision flag).
-            generation_record = json.dumps(
-                {
-                    "compositor": "deterministic-overlay",
-                    "headline": spec.hook,
-                    "cta": spec.cta,
-                    "typography_style": getattr(spec, "typography_style", None),
-                    "layout": layout_report,
-                }
-            )
+            if model_record is not None:
+                generation_record = json.dumps(
+                    {
+                        "compositor": "model-rendered",
+                        "ad_text_mode": "model",
+                        "source": source,
+                        "headline": spec.hook,
+                        "cta": spec.cta,
+                        "badge": model_record.get("badge"),
+                    }
+                )
+            else:
+                generation_record = json.dumps(
+                    {
+                        "compositor": "deterministic-overlay",
+                        "headline": spec.hook,
+                        "cta": spec.cta,
+                        "typography_style": getattr(spec, "typography_style", None),
+                        "layout": layout_report,
+                    }
+                )
             asset = await mark_completed(
                 session,
                 asset.id,
@@ -410,21 +530,39 @@ async def render_video(input: RenderVideoInput) -> RenderVideoOutput:
 
             # The same layout engine as the 9:16 still, so the video's type,
             # colours and CTA are identical to the approved image ads.
-            layers = render_video_layers(
-                hero_bytes, spec, (width, height), subject_hint=await _locate_subject(hero_bytes, spec)
-            )
-            render_spec = VideoRenderSpec(
-                headline_text=spec.hook,
-                cta_text=spec.cta,
-                target_width=width,
-                target_height=height,
-                target_duration_seconds=float(duration),
-                background_frame=layers.background_frame,
-                headline_layer=layers.headline_layer,
-                end_card_frame=layers.end_card_frame,
-                cta_layer=layers.cta_layer,
-                extra={"beats": (spec.video_outline or {}).get("beats", [])},
-            )
+            model_record = _model_mode_record(hero_asset)
+            if model_record is not None:
+                # AD_TEXT_MODE=model: animate the derived 9:16 ad; its copy is baked in,
+                # so there are no separate headline/CTA layers to bring in.
+                frame = _as_png(await _derived_9x16(hero_asset, hero_bytes, input.campaign_id, model_record))
+                render_spec = VideoRenderSpec(
+                    headline_text=spec.hook,
+                    cta_text=spec.cta,
+                    target_width=width,
+                    target_height=height,
+                    target_duration_seconds=float(duration),
+                    background_frame=frame,
+                    headline_layer=None,
+                    end_card_frame=frame,
+                    cta_layer=None,
+                    extra={"beats": (spec.video_outline or {}).get("beats", [])},
+                )
+            else:
+                layers = render_video_layers(
+                    hero_bytes, spec, (width, height), subject_hint=await _locate_subject(hero_bytes, spec)
+                )
+                render_spec = VideoRenderSpec(
+                    headline_text=spec.hook,
+                    cta_text=spec.cta,
+                    target_width=width,
+                    target_height=height,
+                    target_duration_seconds=float(duration),
+                    background_frame=layers.background_frame,
+                    headline_layer=layers.headline_layer,
+                    end_card_frame=layers.end_card_frame,
+                    cta_layer=layers.cta_layer,
+                    extra={"beats": (spec.video_outline or {}).get("beats", [])},
+                )
 
             video_adapter = get_video_adapter()
             generated = await video_adapter.render(hero_bytes, render_spec, idempotency_key)
